@@ -141,6 +141,9 @@ export default function LeaguePage() {
       <hr style={{ margin: "24px 0" }} />
 
       <h2 style={{ fontSize: 18, fontWeight: 700 }}>Members</h2>
+        <br />
+      <b><a href={`/league/${leagueId}/draft`}>Go to Draft Room</a></b>
+
 
       {!isJoined && (
         <div style={{ marginTop: 12, display: "flex", gap: 12 }}>
