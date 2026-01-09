@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { supabase } from "../lib/supabase";
+import AuthStatus from "./components/AuthStatus";
 
 export default function Home() {
   const [name, setName] = useState("");
@@ -28,6 +29,7 @@ export default function Home() {
 
   return (
     <main style={{ padding: 40, fontFamily: "system-ui" }}>
+      <AuthStatus />
       <h1 style={{ fontSize: 28, fontWeight: 700 }}>NFL Playoff Draft</h1>
 
       <div style={{ marginTop: 20, display: "flex", gap: 12 }}>
