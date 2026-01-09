@@ -228,6 +228,24 @@ export default function DraftPage() {
     }
   }
 
+  async function resetDraft() {
+    if (!leagueId) return;
+    if (!confirm("Reset draft? This deletes all picks for this league.")) return;
+  
+    setBusy(true);
+    const { error } = await supabase.rpc("reset_draft", { p_league_id: leagueId });
+    setBusy(false);
+  
+    if (error) {
+      alert(error.message);
+      return;
+    }
+  
+    setPicks([]);
+    setLeague((prev: any) => ({ ...prev, draft_status: "lobby" }));
+  }
+  
+
   if (!leagueId) return <main style={{ padding: 40 }}>Loading...</main>;
   if (error) return <main style={{ padding: 40 }}>Error: {error}</main>;
   if (!league) return <main style={{ padding: 40 }}>Loading league...</main>;
@@ -250,6 +268,9 @@ export default function DraftPage() {
         </button>
         <button onClick={startDraft} disabled={busy || league.draft_status === "draft"}>
           Start draft
+        </button>
+        <button onClick={resetDraft} disabled={busy}>
+          Reset draft
         </button>
       </div>
 
