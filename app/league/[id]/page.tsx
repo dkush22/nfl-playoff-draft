@@ -1,14 +1,26 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { supabase } from "../../../lib/supabase";
+
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
 
 type Member = { user_id: string; display_name: string; created_at?: string };
 type Player = { id: string; name: string; pos: "QB" | "RB" | "WR" | "TE"; nfl_team: string };
 type PickRow = { id: string; pick_number: number; user_id: string; player_id: string; created_at: string };
-
 type Standing = { user_id: string; display_name: string; total_points: number };
+
+function statusLabel(status: string) {
+  if (status === "draft") return "Draft Live";
+  if (status === "post_draft") return "Season Live";
+  return "Lobby";
+}
 
 export default function LeaguePage() {
   const params = useParams<{ id: string }>();
@@ -32,14 +44,19 @@ export default function LeaguePage() {
 
   const isJoined = useMemo(() => members.some((m) => m.user_id === userId), [members, userId]);
   const myMember = useMemo(() => members.find((m) => m.user_id === userId), [members, userId]);
-
   const nameByUserId = useMemo(() => new Map(members.map((m) => [m.user_id, m.display_name])), [members]);
 
   const leagueStatus = (league?.status as "pre_draft" | "draft" | "post_draft") ?? "pre_draft";
+
   const leagueFull = useMemo(() => {
     const cap = Number(league?.num_teams ?? 0);
     return cap > 0 && members.length >= cap;
   }, [league?.num_teams, members.length]);
+
+  const shareUrl = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    return window.location.href;
+  }, []);
 
   // Auth
   useEffect(() => {
@@ -152,8 +169,6 @@ export default function LeaguePage() {
 
     const channel = supabase
       .channel(`league-home-live-${leagueId}`)
-
-      // League state changes
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "leagues", filter: `id=eq.${leagueId}` },
@@ -162,8 +177,6 @@ export default function LeaguePage() {
           setLeague((prev: any) => ({ ...(prev || {}), ...(updated || {}) }));
         }
       )
-
-      // Member joins
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "league_members", filter: `league_id=eq.${leagueId}` },
@@ -175,8 +188,6 @@ export default function LeaguePage() {
           });
         }
       )
-
-      // Picks update rosters live
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "draft_picks", filter: `league_id=eq.${leagueId}` },
@@ -188,8 +199,6 @@ export default function LeaguePage() {
           });
         }
       )
-
-      // Scoring updates standings live
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "league_team_event_points", filter: `league_id=eq.${leagueId}` },
@@ -237,7 +246,6 @@ export default function LeaguePage() {
       arr.push(p);
       map.set(p.user_id, arr);
     }
-    // already ordered by pick_number, but keep safe
     for (const [uid, arr] of map.entries()) {
       arr.sort((a, b) => a.pick_number - b.pick_number);
       map.set(uid, arr);
@@ -245,117 +253,264 @@ export default function LeaguePage() {
     return map;
   }, [picks]);
 
-  if (!leagueId) return <main style={{ padding: 40 }}>Loading...</main>;
-  if (error) return <main style={{ padding: 40 }}>Error: {error}</main>;
-  if (!league) return <main style={{ padding: 40 }}>Loading league...</main>;
-  if (authLoading) return <div style={{ padding: 40 }}>Loading…</div>;
+  const rosterCountForUser = (uid: string) => (rosterByUserId.get(uid) || []).length;
+
+  if (!leagueId) return <div className="p-10">Loading...</div>;
+  if (error) return <div className="p-10">Error: {error}</div>;
+  if (!league) return <div className="p-10">Loading league...</div>;
+  if (authLoading) return <div className="p-10">Loading…</div>;
 
   if (!user) {
     return (
-      <main style={{ padding: 40 }}>
-        <p>You need to sign in to view this league.</p>
-        <a href="/login">Go to login</a>
-      </main>
+      <div className="p-10">
+        <Card className="max-w-lg">
+          <CardHeader>
+            <CardTitle>Sign in required</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">You need to sign in to view this league.</p>
+            <Button asChild>
+              <Link href="/login">Go to login</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
     );
   }
 
   return (
-    <main style={{ padding: 40, fontFamily: "system-ui", maxWidth: 980 }}>
-      <h1 style={{ fontSize: 28, fontWeight: 700 }}>{league.name}</h1>
-      <p style={{ marginTop: 8 }}>
-        Status: <b>{leagueStatus}</b> • Teams: <b>{members.length}/{league.num_teams}</b>
-      </p>
-
-      <div style={{ marginTop: 10 }}>
-        <b>
-          <a href={`/league/${leagueId}/draft`}>
-            {leagueStatus === "draft" ? "Go to Draft Room" : "View Draft Results"}
-          </a>
-        </b>
-      </div>
-
-      <hr style={{ margin: "24px 0" }} />
-
-      <h2 style={{ fontSize: 18, fontWeight: 700 }}>Standings</h2>
-      {standings.length === 0 ? (
-        <p style={{ opacity: 0.7 }}>No points yet.</p>
-      ) : (
-        <ol style={{ marginTop: 10, paddingLeft: 18 }}>
-          {standings.map((s) => (
-            <li key={s.user_id}>
-              <b>{s.display_name}</b>: {s.total_points.toFixed(2)}
-            </li>
-          ))}
-        </ol>
-      )}
-
-      <hr style={{ margin: "24px 0" }} />
-
-      <h2 style={{ fontSize: 18, fontWeight: 700 }}>Rosters</h2>
-
-      {!isJoined ? (
-        <div style={{ marginTop: 12, display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <input
-            style={{ padding: 10, width: 280 }}
-            placeholder="Your display name"
-            value={nameInput}
-            onChange={(e) => setNameInput(e.target.value)}
-          />
-          <button style={{ padding: "10px 14px" }} onClick={joinLeague} disabled={joining || leagueFull}>
-            {leagueFull ? "League full" : joining ? "Joining..." : "Join League"}
-          </button>
-        </div>
-      ) : (
-        <p style={{ marginTop: 12, opacity: 0.7 }}>
-          You’ve joined as <b>{myMember?.display_name || "Player"}</b>.
-        </p>
-      )}
-
-      <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
-        {members.map((m) => {
-          const roster = rosterByUserId.get(m.user_id) || [];
-          return (
-            <div key={m.user_id} style={{ border: "1px solid #eee", borderRadius: 12, padding: 14 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                <div style={{ fontWeight: 700 }}>
-                  {m.display_name} {m.user_id === userId ? <span style={{ opacity: 0.6 }}>(you)</span> : null}
+    <div className="min-h-screen bg-background">
+      <div className="mx-auto max-w-6xl px-6 py-10 space-y-8">
+        {/* Header */}
+        <Card>
+          <CardHeader className="space-y-2">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="space-y-1">
+                <CardTitle className="text-2xl">{league.name}</CardTitle>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="secondary">{statusLabel(leagueStatus)}</Badge>
+                  <span className="text-sm text-muted-foreground">
+                    Teams: <span className="font-medium text-foreground">{members.length}</span>/
+                    <span className="font-medium text-foreground">{league.num_teams}</span>
+                  </span>
+                  {leagueFull ? <Badge variant="outline">Full</Badge> : <Badge variant="outline">Open</Badge>}
                 </div>
-                <div style={{ opacity: 0.7 }}>{roster.length} players</div>
               </div>
 
-              {roster.length === 0 ? (
-                <p style={{ marginTop: 10, opacity: 0.7 }}>No picks yet.</p>
-              ) : (
-                <ol style={{ marginTop: 10, paddingLeft: 18 }}>
-                  {roster.map((p) => {
-                    const pl = playersById.get(p.player_id);
-                    return (
-                      <li key={p.id}>
-                        {pl ? (
-                          <>
-                            {pl.name} <span style={{ opacity: 0.7 }}>({pl.pos}, {pl.nfl_team})</span>
-                          </>
-                        ) : (
-                          <span>{p.player_id}</span>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ol>
-              )}
-            </div>
-          );
-        })}
-      </div>
+              <div className="flex flex-wrap gap-2">
+                <Button asChild>
+                  <Link href={`/league/${leagueId}/draft`}>
+                    {leagueStatus === "draft" ? "Go to Draft Room" : "View Draft Results"}
+                  </Link>
+                </Button>
 
-      {!leagueFull ? (
-        <p style={{ marginTop: 22, opacity: 0.7 }}>
-          Send this link to friends to join:{" "}
-          <code>{typeof window !== "undefined" ? window.location.href : ""}</code>
-        </p>
-      ) : (
-        <p style={{ marginTop: 22, opacity: 0.7 }}>League is full.</p>
-      )}
-    </main>
+                {!leagueFull && (
+                  <Button
+                    variant="secondary"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(shareUrl);
+                        alert("Invite link copied");
+                      } catch {
+                        alert("Couldn’t copy. You can copy the URL from the address bar.");
+                      }
+                    }}
+                  >
+                    Copy invite link
+                  </Button>
+                )}
+              </div>
+            </div>
+          </CardHeader>
+
+          {!leagueFull && (
+            <CardContent>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-muted-foreground">
+                  Invite friends before the league fills. Once full, invites disappear.
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  League ID: <span className="font-mono">{league.id}</span>
+                </p>
+              </div>
+            </CardContent>
+          )}
+        </Card>
+
+        {/* Two-column: Standings + Join */}
+        <div className="grid gap-6 md:grid-cols-3">
+          <Card className="md:col-span-2">
+            <CardHeader>
+              <CardTitle className="text-lg">Standings</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {standings.length === 0 ? (
+                <div className="text-sm text-muted-foreground">No points yet.</div>
+              ) : (
+                <div className="space-y-3">
+                  {standings.map((s, idx) => (
+                    <div key={s.user_id} className="flex items-center justify-between rounded-lg border p-3">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-full border text-sm font-semibold">
+                          {idx + 1}
+                        </div>
+                        <div className="leading-tight">
+                          <div className="font-medium">
+                            {s.display_name}{" "}
+                            {s.user_id === userId ? (
+                              <span className="text-xs text-muted-foreground">(you)</span>
+                            ) : null}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            Roster: {rosterCountForUser(s.user_id)} players
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="text-right">
+                        <div className="text-lg font-semibold tabular-nums">{s.total_points.toFixed(2)}</div>
+                        <div className="text-xs text-muted-foreground">points</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">{isJoined ? "You’re in" : "Join this league"}</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {isJoined ? (
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">
+                    Joined as <span className="font-medium text-foreground">{myMember?.display_name || "Player"}</span>.
+                  </p>
+                  <Separator />
+                  <p className="text-xs text-muted-foreground">
+                    Tip: open the Draft Room to see live picks and draft order.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    Pick a display name. You can change it later (we’ll add that).
+                  </p>
+                  <div className="space-y-2">
+                    <Input
+                      placeholder="Your display name"
+                      value={nameInput}
+                      onChange={(e) => setNameInput(e.target.value)}
+                      disabled={joining || leagueFull}
+                    />
+                    <Button className="w-full" onClick={joinLeague} disabled={joining || leagueFull}>
+                      {leagueFull ? "League full" : joining ? "Joining..." : "Join League"}
+                    </Button>
+                  </div>
+                </>
+              )}
+
+              {leagueFull && !isJoined ? (
+                <p className="text-xs text-muted-foreground">This league is full. Ask the commissioner to open spots.</p>
+              ) : null}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Rosters */}
+        <Card>
+          <CardHeader className="space-y-1">
+            <CardTitle className="text-lg">Rosters</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Each team’s drafted players. Updates live as picks come in.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {members.map((m) => {
+                const roster = rosterByUserId.get(m.user_id) || [];
+                const isMe = m.user_id === userId;
+
+                return (
+                  <Card key={m.user_id} className="overflow-hidden">
+                    <CardHeader className="pb-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="font-semibold leading-tight">
+                            {m.display_name}{" "}
+                            {isMe ? <span className="text-xs text-muted-foreground">(you)</span> : null}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {roster.length} player{roster.length === 1 ? "" : "s"}
+                          </div>
+                        </div>
+                        <Badge variant="secondary">{roster.length}</Badge>
+                      </div>
+                    </CardHeader>
+
+                    <CardContent className="pt-0">
+                      {roster.length === 0 ? (
+                        <div className="text-sm text-muted-foreground">No picks yet.</div>
+                      ) : (
+                        <div className="space-y-2">
+                          {roster.map((p) => {
+                            const pl = playersById.get(p.player_id);
+                            const label = pl ? `${pl.name}` : p.player_id;
+                            const meta = pl ? `${pl.pos} • ${pl.nfl_team}` : "";
+
+                            return (
+                              <div key={p.id} className="flex items-center justify-between rounded-md border px-3 py-2">
+                                <div className="min-w-0">
+                                  <div className="truncate text-sm font-medium">{label}</div>
+                                  {meta ? <div className="text-xs text-muted-foreground">{meta}</div> : null}
+                                </div>
+                                <div className="ml-3 text-xs text-muted-foreground tabular-nums">#{p.pick_number}</div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+
+            {/* Invite link (hidden once full) */}
+            {!leagueFull ? (
+              <div className="mt-6 rounded-lg border p-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="text-sm">
+                    <div className="font-medium">Invite link</div>
+                    <div className="text-xs text-muted-foreground">Share this until the league is full.</div>
+                  </div>
+
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <code className="max-w-[520px] truncate rounded-md bg-muted px-3 py-2 text-xs">{shareUrl}</code>
+                    <Button
+                      variant="secondary"
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(shareUrl);
+                          alert("Invite link copied");
+                        } catch {
+                          alert("Couldn’t copy. You can copy the URL from the address bar.");
+                        }
+                      }}
+                    >
+                      Copy
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-6 rounded-lg border p-4 text-sm text-muted-foreground">League is full.</div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
   );
 }

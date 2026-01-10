@@ -6,6 +6,14 @@ import { useRouter } from "next/navigation";
 import { supabase } from "../lib/supabase";
 import AuthStatus from "./components/AuthStatus";
 
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+
 type League = {
   id: string;
   name: string;
@@ -14,6 +22,19 @@ type League = {
   num_teams: number;
   created_at?: string;
 };
+
+function statusLabel(status: string) {
+  if (status === "pre_draft") return "Pre-draft";
+  if (status === "draft") return "Draft";
+  if (status === "post_draft") return "Post-draft";
+  return status;
+}
+
+function statusVariant(status: string): "secondary" | "default" | "outline" {
+  if (status === "draft") return "default";
+  if (status === "post_draft") return "secondary";
+  return "outline";
+}
 
 export default function Home() {
   const router = useRouter();
@@ -53,9 +74,7 @@ export default function Home() {
       setUserId(session?.user?.id ?? null);
     });
 
-    return () => {
-      sub.subscription.unsubscribe();
-    };
+    return () => sub.subscription.unsubscribe();
   }, []);
 
   // Load leagues (my + public)
@@ -69,7 +88,6 @@ export default function Home() {
     async function load() {
       setLoadingLists(true);
 
-      // memberships -> league ids
       const { data: mems, error: memErr } = await supabase
         .from("league_members")
         .select("league_id")
@@ -83,7 +101,7 @@ export default function Home() {
 
       const leagueIds = (mems || []).map((m) => m.league_id as string);
 
-      // my leagues
+      // My leagues
       if (leagueIds.length > 0) {
         const { data: leagues, error: leaguesErr } = await supabase
           .from("leagues")
@@ -97,7 +115,7 @@ export default function Home() {
         setMyLeagues([]);
       }
 
-      // public leagues (exclude ones already joined)
+      // Public leagues (exclude ones already joined)
       const { data: pubs, error: pubsErr } = await supabase
         .from("leagues")
         .select("id,name,status,is_public,num_teams,created_at")
@@ -122,12 +140,10 @@ export default function Home() {
 
     const leagueName = name.trim();
     const dn = displayName.trim();
-
     if (!leagueName || !dn) return;
 
     setCreating(true);
 
-    // 1) create league
     const { data: league, error: leagueErr } = await supabase
       .from("leagues")
       .insert({
@@ -148,14 +164,12 @@ export default function Home() {
       return;
     }
 
-    // 2) auto-join commissioner with chosen display name
     const { error: joinErr } = await supabase.from("league_members").insert({
       league_id: league.id,
       user_id: userId,
       display_name: dn,
     });
 
-    // If you have a unique index (league_id, user_id), double-click is safe.
     if (joinErr && !String(joinErr.message).toLowerCase().includes("duplicate")) {
       console.error(joinErr);
       alert(joinErr.message);
@@ -170,128 +184,275 @@ export default function Home() {
   }
 
   if (authLoading) {
-    return <main style={{ padding: 40, fontFamily: "system-ui" }}>Loading…</main>;
+    return (
+      <main className="min-h-screen bg-background">
+        <div className="mx-auto max-w-5xl px-6 py-10">
+          <Card>
+            <CardHeader>
+              <CardTitle>Loading</CardTitle>
+              <CardDescription>Getting things ready…</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="h-10 w-full rounded-md bg-muted" />
+            </CardContent>
+          </Card>
+        </div>
+      </main>
+    );
   }
 
   if (!userId) {
     return (
-      <main style={{ padding: 40, fontFamily: "system-ui", maxWidth: 900 }}>
-        <h1 style={{ fontSize: 28, fontWeight: 700 }}>NFL Playoff Draft</h1>
-        <p style={{ marginTop: 8, opacity: 0.8 }}>Sign in to create or join leagues.</p>
-        <div style={{ marginTop: 14 }}>
-          <Link href="/login">Go to login</Link>
+      <main className="min-h-screen bg-background">
+        <div className="mx-auto max-w-5xl px-6 py-12">
+          <div className="flex items-start justify-between gap-6">
+            <div className="space-y-2">
+              <h1 className="text-3xl font-semibold tracking-tight">NFL Playoff Draft</h1>
+              <p className="text-muted-foreground">
+                Create a league, invite friends, draft once, and let points accumulate through the playoffs.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-8">
+            <Card>
+              <CardHeader>
+                <CardTitle>Sign in to get started</CardTitle>
+                <CardDescription>You’ll need to sign in to create or join leagues.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button asChild>
+                  <Link href="/login">Go to login</Link>
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
         </div>
       </main>
     );
   }
 
   return (
-    <main style={{ padding: 40, fontFamily: "system-ui", maxWidth: 980 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 20 }}>
-        <div>
-          <h1 style={{ fontSize: 28, fontWeight: 700 }}>NFL Playoff Draft</h1>
-          <p style={{ marginTop: 6, opacity: 0.7 }}>
-            Create a league, invite friends, draft once, and let points accumulate through the playoffs.
-          </p>
-        </div>
-        <AuthStatus />
-      </div>
-
-      {/* Create league */}
-      <section style={{ marginTop: 22, padding: 16, border: "1px solid #ddd", borderRadius: 10 }}>
-        <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 10 }}>Create a league</h2>
-
-        <div style={{ display: "grid", gap: 10 }}>
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-            <input
-              style={{ padding: 10, width: 280 }}
-              placeholder="League name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-
-            <input
-              style={{ padding: 10, width: 220 }}
-              placeholder="Your display name"
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-            />
-
-            <input
-              style={{ padding: 10, width: 140 }}
-              type="number"
-              min={2}
-              max={20}
-              value={numTeams}
-              onChange={(e) => setNumTeams(parseInt(e.target.value || "7", 10))}
-              placeholder="Teams"
-            />
-
-            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <input type="checkbox" checked={isPublic} onChange={(e) => setIsPublic(e.target.checked)} />
-              Public
-            </label>
-
-            <button
-              style={{ padding: "10px 14px" }}
-              onClick={createLeague}
-              disabled={!canCreate || creating}
-              title={!canCreate ? "Enter a league name, your display name, and valid team count" : ""}
-            >
-              {creating ? "Creating..." : "Create"}
-            </button>
+    <main className="min-h-screen bg-background">
+      <div className="mx-auto max-w-6xl px-6 py-10">
+        {/* Header */}
+        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div className="space-y-2">
+            <h1 className="text-3xl font-semibold tracking-tight">NFL Playoff Draft</h1>
+            <p className="text-muted-foreground">
+              Create a league, invite friends, draft once, and let points accumulate through the playoffs.
+            </p>
           </div>
-
-          <div style={{ fontSize: 13, opacity: 0.75 }}>
-            Defaults: 1 QB, 5 Flex (RB/WR/TE). You can make this configurable later.
+          <div className="md:pt-1">
+            <AuthStatus />
           </div>
         </div>
-      </section>
 
-      {/* Lists */}
-      <div style={{ marginTop: 26, display: "grid", gap: 22 }}>
-        <section>
-          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-            <h2 style={{ fontSize: 18, fontWeight: 700 }}>My leagues</h2>
-            <button style={{ padding: "6px 10px" }} onClick={() => window.location.reload()} disabled={loadingLists}>
-              {loadingLists ? "Refreshing..." : "Refresh"}
-            </button>
+        <Separator className="my-8" />
+
+        {/* Create league */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Create a league</CardTitle>
+            <CardDescription>Set the basics now. You can make rules configurable later.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-12">
+              <div className="space-y-2 lg:col-span-4">
+                <Label htmlFor="leagueName">League name</Label>
+                <Input
+                  id="leagueName"
+                  placeholder="e.g. Danny’s Degens"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                />
+              </div>
+
+              <div className="space-y-2 lg:col-span-4">
+                <Label htmlFor="displayName">Your display name</Label>
+                <Input
+                  id="displayName"
+                  placeholder="e.g. Danny K"
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                />
+              </div>
+
+              <div className="space-y-2 lg:col-span-2">
+                <Label htmlFor="numTeams">Teams</Label>
+                <Input
+                  id="numTeams"
+                  type="number"
+                  min={2}
+                  max={20}
+                  value={numTeams}
+                  onChange={(e) => setNumTeams(parseInt(e.target.value || "7", 10))}
+                />
+              </div>
+
+              <div className="flex items-end lg:col-span-2">
+              <div className="grid gap-2 lg:col-span-2">
+  <div className="flex items-center justify-between">
+    <Label className="text-sm">Visibility</Label>
+    <span className="text-xs text-muted-foreground">
+      {isPublic ? "Public" : "Private"}
+    </span>
+  </div>
+
+  <div className="inline-flex w-full overflow-hidden rounded-md border bg-background">
+    <button
+      type="button"
+      onClick={() => setIsPublic(false)}
+      className={[
+        "flex-1 px-3 py-2 text-sm font-medium transition",
+        !isPublic ? "bg-muted" : "hover:bg-muted/50",
+      ].join(" ")}
+      aria-pressed={!isPublic}
+    >
+      Private league
+    </button>
+
+    <div className="w-px bg-border" />
+
+    <button
+      type="button"
+      onClick={() => setIsPublic(true)}
+      className={[
+        "flex-1 px-3 py-2 text-sm font-medium transition",
+        isPublic ? "bg-muted" : "hover:bg-muted/50",
+      ].join(" ")}
+      aria-pressed={isPublic}
+    >
+      Public league
+    </button>
+  </div>
+
+  <p className="text-xs text-muted-foreground">
+    {isPublic
+      ? "Anyone can find and join this league."
+      : "Only people with the invite link can join."}
+  </p>
+</div>
+</div>
+
+              <div className="lg:col-span-12">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <p className="text-sm text-muted-foreground">
+                    Defaults: 1 QB, 5 Flex (RB/WR/TE). Max per NFL team enforced in the draft RPC.
+                  </p>
+                  <Button
+                    onClick={createLeague}
+                    disabled={!canCreate || creating}
+                    className="md:w-auto"
+                    title={!canCreate ? "Enter league name, display name, and a valid team count" : ""}
+                  >
+                    {creating ? "Creating…" : "Create league"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Lists */}
+        <div className="mt-10">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-semibold tracking-tight">Leagues</h2>
+            <Button variant="outline" onClick={() => window.location.reload()} disabled={loadingLists}>
+              {loadingLists ? "Refreshing…" : "Refresh"}
+            </Button>
           </div>
 
-          {myLeagues.length === 0 ? (
-            <p style={{ opacity: 0.7 }}>You’re not in any leagues yet.</p>
-          ) : (
-            <ul style={{ marginTop: 10, paddingLeft: 18 }}>
-              {myLeagues.map((l) => (
-                <li key={l.id} style={{ marginBottom: 6 }}>
-                  <Link href={`/league/${l.id}`}>{l.name}</Link>{" "}
-                  <span style={{ opacity: 0.7 }}>
-                    ({l.status}, {l.num_teams} teams{l.is_public ? ", public" : ""})
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
+          <Tabs defaultValue="my" className="mt-4">
+            <TabsList>
+              <TabsTrigger value="my">My leagues</TabsTrigger>
+              <TabsTrigger value="public">Public leagues</TabsTrigger>
+            </TabsList>
 
-        <section>
-          <h2 style={{ fontSize: 18, fontWeight: 700 }}>Public leagues</h2>
+            <TabsContent value="my" className="mt-4">
+              {myLeagues.length === 0 ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">No leagues yet</CardTitle>
+                    <CardDescription>Create one above or join a public league.</CardDescription>
+                  </CardHeader>
+                </Card>
+              ) : (
+                <div className="grid gap-3 md:grid-cols-2">
+                  {myLeagues.map((l) => (
+                    <Card key={l.id} className="transition hover:shadow-sm">
+                      <CardHeader className="space-y-2">
+                        <div className="flex items-start justify-between gap-3">
+                          <CardTitle className="text-base">
+                            <Link href={`/league/${l.id}`} className="hover:underline">
+                              {l.name}
+                            </Link>
+                          </CardTitle>
+                          <Badge variant={statusVariant(l.status)}>{statusLabel(l.status)}</Badge>
+                        </div>
+                        <CardDescription className="flex flex-wrap items-center gap-2">
+                          <span>{l.num_teams} teams</span>
+                          <span className="text-muted-foreground">•</span>
+                          <span>{l.is_public ? "Public" : "Private"}</span>
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <Button asChild className="w-full">
+                          <Link href={`/league/${l.id}`}>Open league</Link>
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </TabsContent>
 
-          {publicLeagues.length === 0 ? (
-            <p style={{ opacity: 0.7 }}>No public leagues right now.</p>
-          ) : (
-            <ul style={{ marginTop: 10, paddingLeft: 18 }}>
-              {publicLeagues.map((l) => (
-                <li key={l.id} style={{ marginBottom: 6 }}>
-                  <Link href={`/league/${l.id}`}>{l.name}</Link>{" "}
-                  <span style={{ opacity: 0.7 }}>
-                    ({l.status}, {l.num_teams} teams)
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
+            <TabsContent value="public" className="mt-4">
+              {publicLeagues.length === 0 ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">No public leagues</CardTitle>
+                    <CardDescription>Ask a friend to set their league to public, or create one.</CardDescription>
+                  </CardHeader>
+                </Card>
+              ) : (
+                <div className="grid gap-3 md:grid-cols-2">
+                  {publicLeagues.map((l) => (
+                    <Card key={l.id} className="transition hover:shadow-sm">
+                      <CardHeader className="space-y-2">
+                        <div className="flex items-start justify-between gap-3">
+                          <CardTitle className="text-base">
+                            <Link href={`/league/${l.id}`} className="hover:underline">
+                              {l.name}
+                            </Link>
+                          </CardTitle>
+                          <Badge variant={statusVariant(l.status)}>{statusLabel(l.status)}</Badge>
+                        </div>
+                        <CardDescription className="flex flex-wrap items-center gap-2">
+                          <span>{l.num_teams} teams</span>
+                          <span className="text-muted-foreground">•</span>
+                          <span>Public</span>
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="flex items-center gap-2">
+                        <Button asChild variant="outline" className="w-full">
+                          <Link href={`/league/${l.id}`}>View</Link>
+                        </Button>
+                        <Button asChild className="w-full">
+                          <Link href={`/league/${l.id}`}>Join</Link>
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </TabsContent>
+          </Tabs>
+        </div>
+
+        <p className="mt-10 text-xs text-muted-foreground">
+          Note: “Join” currently just takes you to the league page where you enter your display name.
+        </p>
       </div>
     </main>
   );
