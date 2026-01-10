@@ -222,7 +222,6 @@ export default function DraftPage() {
 
     if (n < 2) {
       alert("Need at least 2 members to set draft order.");
-      noting;
       return;
     }
     if (n > 12) {
