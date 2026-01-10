@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 type Member = { user_id: string; display_name: string };
 type Player = { id: string; name: string; pos: "QB" | "RB" | "WR" | "TE"; nfl_team: string };
@@ -36,9 +36,8 @@ export default function DraftPage() {
   const params = useParams<{ id: string }>();
   const leagueId = params?.id;
 
-  // Supabase auth user is the real identity for commissioner + turn logic
   const [authUserId, setAuthUserId] = useState<string | null>(null);
-  const myName = useMemo(() => getDisplayName(), []); // UI only for now
+  const myName = useMemo(() => getDisplayName(), []);
 
   const [league, setLeague] = useState<any>(null);
   const [members, setMembers] = useState<Member[]>([]);
@@ -177,6 +176,23 @@ export default function DraftPage() {
   const draftStarted = leagueStatus === "draft";
   const postDraft = leagueStatus === "post_draft";
 
+  const nextPickNumber = picks.length + 1;
+
+  function pickOwnerForSnake(pickNumber: number) {
+    if (!league?.num_teams) return null;
+    const n = Number(league.num_teams);
+    if (!n || n < 1) return null;
+
+    const round = Math.floor((pickNumber - 1) / n) + 1;
+    const idx = ((pickNumber - 1) % n) + 1;
+    const slot = round % 2 === 1 ? idx : n - idx + 1;
+    const entry = order.find((o) => o.slot === slot);
+    return entry?.user_id || null;
+  }
+
+  const currentTurnUserId = draftStarted ? pickOwnerForSnake(nextPickNumber) : null;
+  const myTurn = !!authUserId && !!currentTurnUserId && currentTurnUserId === authUserId;
+
   const draftedPlayerIds = useMemo(() => new Set(picks.map((p) => p.player_id)), [picks]);
 
   const availablePlayers = useMemo(() => {
@@ -194,22 +210,37 @@ export default function DraftPage() {
       });
   }, [players, draftedPlayerIds, search, posFilter]);
 
-  const nextPickNumber = picks.length + 1;
+  const playersById = useMemo(() => {
+    const m = new Map<string, Player>();
+    for (const pl of players) m.set(pl.id, pl);
+    return m;
+  }, [players]);
 
-  function pickOwnerForSnake(pickNumber: number) {
-    if (!league?.num_teams) return null;
-    const n = league.num_teams as number;
-    if (!n || n < 1) return null;
+  const picksByUserId = useMemo(() => {
+    const m = new Map<string, PickRow[]>();
+    for (const p of picks) {
+      const arr = m.get(p.user_id) ?? [];
+      arr.push(p);
+      m.set(p.user_id, arr);
+    }
+    for (const [uid, arr] of m.entries()) {
+      arr.sort((a, b) => a.pick_number - b.pick_number);
+      m.set(uid, arr);
+    }
+    return m;
+  }, [picks]);
 
-    const round = Math.floor((pickNumber - 1) / n) + 1;
-    const idx = ((pickNumber - 1) % n) + 1;
-    const slot = round % 2 === 1 ? idx : n - idx + 1;
-    const entry = order.find((o) => o.slot === slot);
-    return entry?.user_id || null;
-  }
+  const teamsInSlotOrder = useMemo(() => {
+    return order.map((o) => ({
+      slot: o.slot,
+      user_id: o.user_id,
+      display_name: nameByUserId.get(o.user_id) || "Unknown",
+    }));
+  }, [order, nameByUserId]);
 
-  const currentTurnUserId = draftStarted ? pickOwnerForSnake(nextPickNumber) : null;
-  const myTurn = !!authUserId && !!currentTurnUserId && currentTurnUserId === authUserId;
+  const currentOnClockName = currentTurnUserId ? nameByUserId.get(currentTurnUserId) || "Unknown" : null;
+  const pickTotal = (league?.num_teams ? Number(league.num_teams) : 0) * 6;
+  const pickProgress = pickTotal > 0 ? Math.min(100, Math.round((picks.length / pickTotal) * 100)) : 0;
 
   async function setOrderFromJoinOrder() {
     if (!leagueId) return;
@@ -219,7 +250,6 @@ export default function DraftPage() {
     }
 
     const n = members.length;
-
     if (n < 2) {
       alert("Need at least 2 members to set draft order.");
       return;
@@ -234,7 +264,6 @@ export default function DraftPage() {
     await supabase.from("draft_order").delete().eq("league_id", leagueId);
 
     const { error: leagueErr } = await supabase.from("leagues").update({ num_teams: n }).eq("id", leagueId);
-
     if (leagueErr) {
       setBusy(false);
       alert(leagueErr.message);
@@ -248,7 +277,6 @@ export default function DraftPage() {
     }));
 
     const { error } = await supabase.from("draft_order").insert(inserts);
-
     if (error) {
       setBusy(false);
       alert(error.message);
@@ -274,7 +302,6 @@ export default function DraftPage() {
     }
 
     const n = league?.num_teams ?? order.length;
-
     if (!n || n < 2) {
       alert("Need at least 2 teams to start.");
       return;
@@ -319,9 +346,7 @@ export default function DraftPage() {
     });
     setBusy(false);
 
-    if (error) {
-      alert(error.message);
-    }
+    if (error) alert(error.message);
   }
 
   async function resetDraft() {
@@ -349,15 +374,10 @@ export default function DraftPage() {
   if (error) return <div className="p-10">Error: {error}</div>;
   if (!league) return <div className="p-10">Loading league...</div>;
 
-  // Helpful computed views
-  const currentOnClockName = currentTurnUserId ? nameByUserId.get(currentTurnUserId) || "Unknown" : null;
-  const pickTotal = (league?.num_teams ? Number(league.num_teams) : 0) * 6; // your roster is 6 in MVP
-  const pickProgress = pickTotal > 0 ? Math.min(100, Math.round((picks.length / pickTotal) * 100)) : 0;
-
   return (
     <div className="min-h-screen bg-background">
-      <div className="mx-auto max-w-6xl px-6 py-10 space-y-8">
-        {/* Top header */}
+      <div className="mx-auto max-w-7xl px-6 py-10 space-y-8">
+        {/* Header */}
         <Card>
           <CardHeader className="space-y-2">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -393,7 +413,6 @@ export default function DraftPage() {
               </div>
             ) : null}
 
-            {/* On the clock */}
             {draftStarted ? (
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between rounded-lg border p-3">
                 <div className="space-y-1">
@@ -416,7 +435,6 @@ export default function DraftPage() {
               </div>
             ) : null}
 
-            {/* Commissioner controls */}
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-sm text-muted-foreground">
                 {isCommissioner
@@ -434,11 +452,9 @@ export default function DraftPage() {
                     >
                       Set order from join order
                     </Button>
-
                     <Button onClick={startDraft} disabled={busy || draftStarted || postDraft || order.length === 0}>
                       Start draft
                     </Button>
-
                     <Button variant="destructive" onClick={resetDraft} disabled={busy}>
                       Reset
                     </Button>
@@ -449,9 +465,10 @@ export default function DraftPage() {
           </CardContent>
         </Card>
 
-        <div className="grid gap-6 lg:grid-cols-3">
-          {/* Draft order */}
-          <Card className="lg:col-span-1">
+        {/* 3-column draft room */}
+        <div className="grid gap-6 lg:grid-cols-12">
+          {/* Left: Draft order */}
+          <Card className="lg:col-span-3">
             <CardHeader>
               <CardTitle className="text-lg">Draft order</CardTitle>
             </CardHeader>
@@ -473,7 +490,7 @@ export default function DraftPage() {
                         }`}
                       >
                         <div className="min-w-0">
-                          <div className="text-sm font-medium">
+                          <div className="text-sm font-medium truncate">
                             <span className="text-muted-foreground">#{o.slot}</span> {nm}{" "}
                             {isMe ? <span className="text-xs text-muted-foreground">(you)</span> : null}
                           </div>
@@ -488,151 +505,201 @@ export default function DraftPage() {
             </CardContent>
           </Card>
 
-          {/* Picks + Available */}
-          <Card className="lg:col-span-2">
-            <CardHeader className="space-y-2">
+          {/* Middle: Available players */}
+          <Card className="lg:col-span-6">
+            <CardHeader className="space-y-3">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <CardTitle className="text-lg">Draft board</CardTitle>
+                <CardTitle className="text-lg">Available players</CardTitle>
 
                 <div className="flex flex-wrap items-center gap-2">
                   <Input
-                    className="w-full sm:w-64"
-                    placeholder="Search players (name, team, pos)"
+                    className="w-full sm:w-72"
+                    placeholder="Search (name, team, pos)"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                   />
-                  <div className="flex gap-1">
-                    <Button
-                      variant={posFilter === "ALL" ? "default" : "secondary"}
-                      size="sm"
-                      onClick={() => setPosFilter("ALL")}
-                    >
-                      All
-                    </Button>
-                    <Button
-                      variant={posFilter === "QB" ? "default" : "secondary"}
-                      size="sm"
-                      onClick={() => setPosFilter("QB")}
-                    >
-                      QB
-                    </Button>
-                    <Button
-                      variant={posFilter === "RB" ? "default" : "secondary"}
-                      size="sm"
-                      onClick={() => setPosFilter("RB")}
-                    >
-                      RB
-                    </Button>
-                    <Button
-                      variant={posFilter === "WR" ? "default" : "secondary"}
-                      size="sm"
-                      onClick={() => setPosFilter("WR")}
-                    >
-                      WR
-                    </Button>
-                    <Button
-                      variant={posFilter === "TE" ? "default" : "secondary"}
-                      size="sm"
-                      onClick={() => setPosFilter("TE")}
-                    >
-                      TE
-                    </Button>
-                  </div>
                 </div>
               </div>
 
-              <Tabs defaultValue="available">
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant={posFilter === "ALL" ? "default" : "secondary"}
+                  size="sm"
+                  onClick={() => setPosFilter("ALL")}
+                >
+                  All
+                </Button>
+                <Button
+                  variant={posFilter === "QB" ? "default" : "secondary"}
+                  size="sm"
+                  onClick={() => setPosFilter("QB")}
+                >
+                  QB
+                </Button>
+                <Button
+                  variant={posFilter === "RB" ? "default" : "secondary"}
+                  size="sm"
+                  onClick={() => setPosFilter("RB")}
+                >
+                  RB
+                </Button>
+                <Button
+                  variant={posFilter === "WR" ? "default" : "secondary"}
+                  size="sm"
+                  onClick={() => setPosFilter("WR")}
+                >
+                  WR
+                </Button>
+                <Button
+                  variant={posFilter === "TE" ? "default" : "secondary"}
+                  size="sm"
+                  onClick={() => setPosFilter("TE")}
+                >
+                  TE
+                </Button>
+              </div>
+
+              <div className="text-sm text-muted-foreground">
+                {postDraft
+                  ? "Draft is complete. Player list is read-only."
+                  : draftStarted
+                  ? myTurn
+                    ? "It’s your turn."
+                    : "Wait for your turn."
+                  : "Draft hasn't started yet."}
+              </div>
+            </CardHeader>
+
+            <CardContent>
+              <Separator className="mb-4" />
+
+              {availablePlayers.length === 0 ? (
+                <div className="text-sm text-muted-foreground">No players match that filter.</div>
+              ) : (
+                <div className="space-y-2">
+                  {availablePlayers.map((pl) => {
+                    const canDraft = draftStarted && !postDraft && myTurn && !busy;
+
+                    return (
+                      <div
+                        key={pl.id}
+                        className="flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <div className="font-medium truncate">{pl.name}</div>
+                            <Badge variant="secondary">{posBadge(pl.pos)}</Badge>
+                          </div>
+                          <div className="text-xs text-muted-foreground">{pl.nfl_team}</div>
+                        </div>
+
+                        <Button
+                          onClick={() => draftPlayer(pl.id)}
+                          disabled={!canDraft}
+                          variant={canDraft ? "default" : "secondary"}
+                        >
+                          Draft
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Right: Draft so far */}
+          <Card className="lg:col-span-3">
+            <CardHeader>
+              <CardTitle className="text-lg">Draft so far</CardTitle>
+            </CardHeader>
+
+            <CardContent>
+              <Tabs defaultValue="feed">
                 <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="available">Available</TabsTrigger>
-                  <TabsTrigger value="picks">Picks</TabsTrigger>
+                  <TabsTrigger value="feed">Feed</TabsTrigger>
+                  <TabsTrigger value="teams">Teams</TabsTrigger>
                 </TabsList>
 
-                <TabsContent value="available" className="mt-4">
-                  <div className="text-sm text-muted-foreground">
-                    {postDraft
-                      ? "Draft is complete. Available players are shown for reference only."
-                      : draftStarted
-                      ? myTurn
-                        ? "It’s your turn. Pick wisely."
-                        : "Wait for your turn."
-                      : "Draft hasn't started yet."}
-                  </div>
-
-                  <Separator className="my-4" />
-
-                  {availablePlayers.length === 0 ? (
-                    <div className="text-sm text-muted-foreground">No players match that filter.</div>
-                  ) : (
-                    <div className="space-y-2">
-                      {availablePlayers.map((pl) => {
-                        const canDraft = draftStarted && !postDraft && myTurn && !busy;
-
-                        return (
-                          <div
-                            key={pl.id}
-                            className="flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
-                          >
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2">
-                                <div className="font-medium truncate">{pl.name}</div>
-                                <Badge variant="secondary">{posBadge(pl.pos)}</Badge>
-                              </div>
-                              <div className="text-xs text-muted-foreground">{pl.nfl_team}</div>
-                            </div>
-
-                            <Button
-                              onClick={() => draftPlayer(pl.id)}
-                              disabled={!canDraft}
-                              variant={canDraft ? "default" : "secondary"}
-                            >
-                              Draft
-                            </Button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </TabsContent>
-
-                <TabsContent value="picks" className="mt-4">
+                <TabsContent value="feed" className="mt-4 space-y-2">
                   {picks.length === 0 ? (
                     <div className="text-sm text-muted-foreground">No picks yet.</div>
                   ) : (
-                    <div className="space-y-2">
-                      {picks.map((p) => {
-                        const pl = players.find((x) => x.id === p.player_id);
+                    [...picks]
+                      .slice()
+                      .sort((a, b) => b.pick_number - a.pick_number)
+                      .map((p) => {
+                        const pl = playersById.get(p.player_id);
                         const who = nameByUserId.get(p.user_id) || "Unknown";
-                        const isMe = authUserId && p.user_id === authUserId;
 
                         return (
-                          <div
-                            key={p.id}
-                            className="flex flex-col gap-1 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
-                          >
-                            <div className="min-w-0">
-                              <div className="text-sm text-muted-foreground">
-                                Pick <span className="font-medium text-foreground">#{p.pick_number}</span>
-                              </div>
-                              <div className="font-medium truncate">
-                                {who} {isMe ? <span className="text-xs text-muted-foreground">(you)</span> : null}
-                              </div>
+                          <div key={p.id} className="rounded-md border p-2">
+                            <div className="text-xs text-muted-foreground">Pick #{p.pick_number}</div>
+                            <div className="text-sm font-medium truncate">{who}</div>
+                            <div className="text-sm truncate">
+                              {pl ? pl.name : p.player_id}
+                              {pl ? (
+                                <Badge variant="secondary" className="ml-2">
+                                  {posBadge(pl.pos)}
+                                </Badge>
+                              ) : null}
                             </div>
-
-                            <div className="text-right">
-                              <div className="font-medium">
-                                {pl ? pl.name : p.player_id}{" "}
-                                {pl ? <Badge variant="secondary" className="ml-2">{posBadge(pl.pos)}</Badge> : null}
-                              </div>
-                              {pl ? <div className="text-xs text-muted-foreground">{pl.nfl_team}</div> : null}
-                            </div>
+                            {pl ? <div className="text-xs text-muted-foreground">{pl.nfl_team}</div> : null}
                           </div>
                         );
-                      })}
-                    </div>
+                      })
+                  )}
+                </TabsContent>
+
+                <TabsContent value="teams" className="mt-4 space-y-3">
+                  {teamsInSlotOrder.length === 0 ? (
+                    <div className="text-sm text-muted-foreground">Draft order not set yet.</div>
+                  ) : (
+                    teamsInSlotOrder.map((t) => {
+                      const roster = picksByUserId.get(t.user_id) || [];
+                      const isOnClock = draftStarted && currentTurnUserId === t.user_id;
+
+                      return (
+                        <div
+                          key={t.user_id}
+                          className={`rounded-md border p-2 ${isOnClock ? "ring-1 ring-border" : ""}`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="text-sm font-medium truncate">
+                              <span className="text-muted-foreground">#{t.slot}</span> {t.display_name}
+                            </div>
+                            {isOnClock ? <Badge>Live</Badge> : null}
+                          </div>
+
+                          {roster.length === 0 ? (
+                            <div className="text-xs text-muted-foreground mt-1">No picks yet</div>
+                          ) : (
+                            <div className="mt-2 space-y-1">
+                              {roster.map((p) => {
+                                const pl = playersById.get(p.player_id);
+                                return (
+                                  <div key={p.id} className="flex items-center justify-between gap-2">
+                                    <div className="min-w-0 text-xs truncate">
+                                      <span className="text-muted-foreground">#{p.pick_number}</span>{" "}
+                                      {pl ? pl.name : p.player_id}
+                                    </div>
+                                    {pl ? (
+                                      <Badge variant="secondary" className="shrink-0">
+                                        {posBadge(pl.pos)}
+                                      </Badge>
+                                    ) : null}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
                   )}
                 </TabsContent>
               </Tabs>
-            </CardHeader>
+            </CardContent>
           </Card>
         </div>
       </div>
