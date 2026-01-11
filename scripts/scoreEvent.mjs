@@ -352,23 +352,34 @@ async function updateLeagueTeamPoints() {
       });
     }
 
-    // Upsert team points for this league
+    // Update team points for this league (delete old records, insert new ones)
     if (teamPointsRows.length > 0) {
-      console.log(`    Upserting ${teamPointsRows.length} team point record(s)...`);
+      console.log(`    Updating ${teamPointsRows.length} team point record(s)...`);
 
-      const { error: upsertErr } = await supabase
+      // First, delete existing records for this league
+      const { error: deleteErr } = await supabase
         .from("league_team_event_points")
-        .upsert(teamPointsRows, { onConflict: "league_id,user_id" });
+        .delete()
+        .eq("league_id", leagueId);
 
-      if (upsertErr) {
-        console.error(`    ❌ Error upserting team points:`, upsertErr);
+      if (deleteErr) {
+        console.error(`    ❌ Error deleting old team points:`, deleteErr);
       } else {
-        console.log(`    ✅ Successfully updated ${teamPointsRows.length} team(s)`);
-        // Show the points for verification
-        teamPointsRows.forEach(row => {
-          console.log(`       User ${row.user_id.substring(0, 8)}... = ${row.fantasy_points} points`);
-        });
-        totalUpdates += teamPointsRows.length;
+        // Then insert the new records
+        const { error: insertErr } = await supabase
+          .from("league_team_event_points")
+          .insert(teamPointsRows);
+
+        if (insertErr) {
+          console.error(`    ❌ Error inserting team points:`, insertErr);
+        } else {
+          console.log(`    ✅ Successfully updated ${teamPointsRows.length} team(s)`);
+          // Show the points for verification
+          teamPointsRows.forEach(row => {
+            console.log(`       User ${row.user_id.substring(0, 8)}... = ${row.fantasy_points} points`);
+          });
+          totalUpdates += teamPointsRows.length;
+        }
       }
     } else {
       console.log(`    ⚠️  No team points to update`);
