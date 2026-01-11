@@ -204,25 +204,81 @@ export default function Home() {
   if (!userId) {
     return (
       <main className="min-h-screen bg-background">
-        <div className="mx-auto max-w-5xl px-6 py-12">
-          <div className="flex items-start justify-between gap-6">
-            <div className="space-y-2">
-              <h1 className="text-3xl font-semibold tracking-tight">NFL Playoff Draft</h1>
-              <p className="text-muted-foreground">
-                Create a league, invite friends, draft once, and let points accumulate through the playoffs.
-              </p>
+        {/* Hero Section */}
+        <div className="relative overflow-hidden gradient-field py-20">
+          <div className="absolute inset-0 bg-[url('/grid.svg')] bg-center opacity-10"></div>
+          <div className="relative mx-auto max-w-5xl px-6 text-center">
+            <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-primary-foreground/20 bg-primary-foreground/10 px-3 py-1 text-sm text-primary-foreground">
+              <span>🏈</span>
+              <span>NFL Playoff Fantasy</span>
             </div>
+            <h1 className="text-5xl font-bold tracking-tight text-primary-foreground sm:text-6xl mb-6">
+              NFL Playoff Draft
+            </h1>
+            <p className="text-xl text-primary-foreground/90 mb-8 max-w-2xl mx-auto">
+              Create a league, invite friends, draft once, and let points accumulate through the playoffs.
+            </p>
+            <Button asChild size="lg" className="bg-secondary hover:bg-secondary/90 text-secondary-foreground shadow-xl">
+              <Link href="/login">Get Started</Link>
+            </Button>
           </div>
+        </div>
 
-          <div className="mt-8">
-            <Card>
+        {/* Features */}
+        <div className="mx-auto max-w-6xl px-6 py-16">
+          <div className="grid gap-6 md:grid-cols-3">
+            <Card className="card-hover">
               <CardHeader>
-                <CardTitle>Sign in to get started</CardTitle>
-                <CardDescription>You’ll need to sign in to create or join leagues.</CardDescription>
+                <CardTitle className="flex items-center gap-2">
+                  <span className="text-2xl">⚡</span>
+                  Quick Setup
+                </CardTitle>
               </CardHeader>
               <CardContent>
-                <Button asChild>
-                  <Link href="/login">Go to login</Link>
+                <p className="text-sm text-muted-foreground">
+                  Create a league in seconds. Set your team size, draft settings, and invite your friends.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card className="card-hover">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <span className="text-2xl">🎯</span>
+                  Live Scoring
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Real-time updates as your players score. Watch the standings change with every touchdown.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card className="card-hover">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <span className="text-2xl">🏆</span>
+                  Playoff Action
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Draft once and compete through the entire NFL playoff season. May the best team win!
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="mt-12 text-center">
+            <Card className="glass-effect">
+              <CardHeader>
+                <CardTitle>Ready to compete?</CardTitle>
+                <CardDescription>Sign in to create or join a league</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button asChild className="gradient-field text-primary-foreground">
+                  <Link href="/login">Sign in to continue</Link>
                 </Button>
               </CardContent>
             </Card>
@@ -234,24 +290,25 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-background">
-      <div className="mx-auto max-w-6xl px-6 py-10">
-        {/* Header */}
-        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-          <div className="space-y-2">
-            <h1 className="text-3xl font-semibold tracking-tight">NFL Playoff Draft</h1>
-            <p className="text-muted-foreground">
-              Create a league, invite friends, draft once, and let points accumulate through the playoffs.
-            </p>
-          </div>
-          <div className="md:pt-1">
-            <AuthStatus />
+      {/* Hero Banner */}
+      <div className="gradient-field py-12 mb-10">
+        <div className="mx-auto max-w-6xl px-6">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h1 className="text-4xl font-bold tracking-tight text-primary-foreground mb-2">
+                Your Leagues
+              </h1>
+              <p className="text-primary-foreground/80">
+                Manage your fantasy playoff leagues and track your teams
+              </p>
+            </div>
           </div>
         </div>
+      </div>
 
-        <Separator className="my-8" />
-
+      <div className="mx-auto max-w-6xl px-6 -mt-6 pb-16">
         {/* Create league */}
-        <Card>
+        <Card className="shadow-xl border-2">
           <CardHeader>
             <CardTitle>Create a league</CardTitle>
             <CardDescription>Set the basics now. You can make rules configurable later.</CardDescription>
@@ -378,26 +435,28 @@ export default function Home() {
                   </CardHeader>
                 </Card>
               ) : (
-                <div className="grid gap-3 md:grid-cols-2">
+                <div className="grid gap-4 md:grid-cols-2">
                   {myLeagues.map((l) => (
-                    <Card key={l.id} className="transition hover:shadow-sm">
+                    <Card key={l.id} className="card-hover border-2">
                       <CardHeader className="space-y-2">
                         <div className="flex items-start justify-between gap-3">
                           <CardTitle className="text-base">
-                            <Link href={`/league/${l.id}`} className="hover:underline">
+                            <Link href={`/league/${l.id}`} className="hover:text-primary transition-colors">
                               {l.name}
                             </Link>
                           </CardTitle>
-                          <Badge variant={statusVariant(l.status)}>{statusLabel(l.status)}</Badge>
+                          <Badge variant={statusVariant(l.status)} className="shrink-0">
+                            {statusLabel(l.status)}
+                          </Badge>
                         </div>
                         <CardDescription className="flex flex-wrap items-center gap-2">
-                          <span>{l.num_teams} teams</span>
+                          <span className="font-medium">{l.num_teams} teams</span>
                           <span className="text-muted-foreground">•</span>
-                          <span>{l.is_public ? "Public" : "Private"}</span>
+                          <span>{l.is_public ? "🌐 Public" : "🔒 Private"}</span>
                         </CardDescription>
                       </CardHeader>
                       <CardContent>
-                        <Button asChild className="w-full">
+                        <Button asChild className="w-full gradient-field text-primary-foreground">
                           <Link href={`/league/${l.id}`}>Open league</Link>
                         </Button>
                       </CardContent>
@@ -416,29 +475,31 @@ export default function Home() {
                   </CardHeader>
                 </Card>
               ) : (
-                <div className="grid gap-3 md:grid-cols-2">
+                <div className="grid gap-4 md:grid-cols-2">
                   {publicLeagues.map((l) => (
-                    <Card key={l.id} className="transition hover:shadow-sm">
+                    <Card key={l.id} className="card-hover border-2">
                       <CardHeader className="space-y-2">
                         <div className="flex items-start justify-between gap-3">
                           <CardTitle className="text-base">
-                            <Link href={`/league/${l.id}`} className="hover:underline">
+                            <Link href={`/league/${l.id}`} className="hover:text-primary transition-colors">
                               {l.name}
                             </Link>
                           </CardTitle>
-                          <Badge variant={statusVariant(l.status)}>{statusLabel(l.status)}</Badge>
+                          <Badge variant={statusVariant(l.status)} className="shrink-0">
+                            {statusLabel(l.status)}
+                          </Badge>
                         </div>
                         <CardDescription className="flex flex-wrap items-center gap-2">
-                          <span>{l.num_teams} teams</span>
+                          <span className="font-medium">{l.num_teams} teams</span>
                           <span className="text-muted-foreground">•</span>
-                          <span>Public</span>
+                          <span>🌐 Public</span>
                         </CardDescription>
                       </CardHeader>
                       <CardContent className="flex items-center gap-2">
                         <Button asChild variant="outline" className="w-full">
                           <Link href={`/league/${l.id}`}>View</Link>
                         </Button>
-                        <Button asChild className="w-full">
+                        <Button asChild className="w-full gradient-gold text-foreground">
                           <Link href={`/league/${l.id}`}>Join</Link>
                         </Button>
                       </CardContent>

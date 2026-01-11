@@ -373,25 +373,34 @@ export default function LeaguePage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="mx-auto max-w-6xl px-6 py-10 space-y-8">
-        {/* Header */}
-        <Card>
-          <CardHeader className="space-y-2">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="space-y-1">
-                <CardTitle className="text-2xl">{league.name}</CardTitle>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="secondary">{statusLabel(leagueStatus)}</Badge>
-                  <span className="text-sm text-muted-foreground">
-                    Teams: <span className="font-medium text-foreground">{members.length}</span>/
-                    <span className="font-medium text-foreground">{league.num_teams}</span>
-                  </span>
-                  {leagueFull ? <Badge variant="outline">Full</Badge> : <Badge variant="outline">Open</Badge>}
-                </div>
+      {/* League Header Banner */}
+      <div className="gradient-field py-8 mb-8">
+        <div className="mx-auto max-w-6xl px-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="space-y-2">
+              <h1 className="text-3xl font-bold tracking-tight text-primary-foreground">{league.name}</h1>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="secondary" className="bg-secondary/90">{statusLabel(leagueStatus)}</Badge>
+                <span className="text-sm text-primary-foreground/80">
+                  <span className="font-semibold text-primary-foreground">{members.length}</span>
+                  {" / "}
+                  <span className="font-semibold text-primary-foreground">{league.num_teams}</span>
+                  {" teams"}
+                </span>
+                {leagueFull ? (
+                  <Badge variant="outline" className="border-primary-foreground/30 text-primary-foreground">
+                    🔒 Full
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="border-primary-foreground/30 text-primary-foreground">
+                    ✓ Open
+                  </Badge>
+                )}
               </div>
+            </div>
 
-              <div className="flex flex-wrap gap-2">
-                <Button asChild>
+            <div className="flex flex-wrap gap-2">
+              <Button asChild className="gradient-gold text-foreground shadow-lg">
                   <Link href={`/league/${leagueId}/draft`}>
                     {leagueStatus === "draft" ? "Go to Draft Room" : "View Draft Results"}
                   </Link>
@@ -399,40 +408,30 @@ export default function LeaguePage() {
 
                 {!leagueFull && (
                   <Button
-                    variant="secondary"
+                    variant="outline"
+                    className="border-primary-foreground/30 text-primary-foreground hover:bg-primary-foreground/10"
                     onClick={async () => {
                       try {
                         await navigator.clipboard.writeText(shareUrl);
                         alert("Invite link copied");
                       } catch {
-                        alert("Couldn’t copy. You can copy the URL from the address bar.");
+                        alert("Couldn't copy. You can copy the URL from the address bar.");
                       }
                     }}
                   >
-                    Copy invite link
+                    📋 Copy invite link
                   </Button>
                 )}
               </div>
             </div>
-          </CardHeader>
+          </div>
+        </div>
 
-          {!leagueFull && (
-            <CardContent>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-sm text-muted-foreground">
-                  Invite friends before the league fills. Once full, invites disappear.
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  League ID: <span className="font-mono">{league.id}</span>
-                </p>
-              </div>
-            </CardContent>
-          )}
-        </Card>
+      <div className="mx-auto max-w-6xl px-6 pb-16 -mt-6 space-y-8">
 
         {/* Two-column: Standings + Join */}
         <div className="grid gap-6 md:grid-cols-3">
-          <Card className="md:col-span-2">
+          <Card className="md:col-span-2 shadow-xl border-2">
             <CardHeader>
               <CardTitle className="text-lg">Standings</CardTitle>
             </CardHeader>
@@ -533,25 +532,30 @@ export default function LeaguePage() {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="shadow-xl border-2">
             <CardHeader>
-              <CardTitle className="text-lg">{isJoined ? "You’re in" : "Join this league"}</CardTitle>
+              <CardTitle className="text-lg flex items-center gap-2">
+                {isJoined ? "✓ You're in!" : "Join this league"}
+              </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               {isJoined ? (
-                <div className="space-y-2">
-                  <p className="text-sm text-muted-foreground">
-                    Joined as <span className="font-medium text-foreground">{myMember?.display_name || "Player"}</span>.
-                  </p>
+                <div className="space-y-3">
+                  <div className="rounded-lg bg-primary/10 p-4 border border-primary/20">
+                    <p className="text-sm font-medium text-foreground mb-1">
+                      {myMember?.display_name || "Player"}
+                    </p>
+                    <p className="text-xs text-muted-foreground">Your display name</p>
+                  </div>
                   <Separator />
                   <p className="text-xs text-muted-foreground">
-                    Tip: open the Draft Room to see live picks and draft order.
+                    💡 Tip: Open the Draft Room to see live picks and draft order.
                   </p>
                 </div>
               ) : (
                 <>
                   <p className="text-sm text-muted-foreground">
-                    Pick a display name. You can change it later (we’ll add that).
+                    Pick a display name to join this league.
                   </p>
                   <div className="space-y-2">
                     <Input
@@ -575,11 +579,14 @@ export default function LeaguePage() {
         </div>
 
         {/* Rosters */}
-        <Card>
+        <Card className="shadow-xl border-2">
           <CardHeader className="space-y-1">
-            <CardTitle className="text-lg">Rosters</CardTitle>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <span>📋</span>
+              Team Rosters
+            </CardTitle>
             <p className="text-sm text-muted-foreground">
-              Each team’s drafted players. Updates live as picks come in.
+              Each team's drafted players. Updates live as picks come in.
             </p>
           </CardHeader>
           <CardContent>
@@ -589,7 +596,7 @@ export default function LeaguePage() {
                 const isMe = m.user_id === userId;
 
                 return (
-                  <Card key={m.user_id} className="overflow-hidden">
+                  <Card key={m.user_id} className="overflow-hidden border-2 card-hover">
                     <CardHeader className="pb-3">
                       <div className="flex items-start justify-between gap-3">
                         <div>
