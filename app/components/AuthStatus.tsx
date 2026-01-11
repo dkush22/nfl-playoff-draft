@@ -40,19 +40,21 @@ export default function AuthStatus() {
   }
 
   return (
-    <div style={{ padding: 12, border: "1px solid #ddd", borderRadius: 8, display: "inline-block" }}>
+    <div>
       {user ? (
-        <div style={{ display: "grid", gap: 6 }}>
-          <div style={{ fontWeight: 600 }}>Signed in</div>
-          <div style={{ fontSize: 12, opacity: 0.8 }}>{user.email || "No email"}</div>
-          <div style={{ fontFamily: "monospace", fontSize: 12 }}>{user.id}</div>
-          <button onClick={signOut} style={{ padding: 8 }}>Sign out</button>
-        </div>
+        <button
+          onClick={signOut}
+          className="px-4 py-2 text-sm font-medium rounded-md border border-border hover:bg-muted transition-colors"
+        >
+          Sign out
+        </button>
       ) : (
-        <div style={{ display: "grid", gap: 6 }}>
-          <div style={{ fontWeight: 600 }}>Not signed in</div>
-          <a href="/login">Go to login</a>
-        </div>
+        <a
+          href="/login"
+          className="px-4 py-2 text-sm font-medium rounded-md border border-border hover:bg-muted transition-colors inline-block"
+        >
+          Sign in
+        </a>
       )}
     </div>
   );
