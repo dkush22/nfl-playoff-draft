@@ -154,8 +154,7 @@ export default function LeaguePage() {
   useEffect(() => {
     if (!leagueId) return;
     refreshStandings();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [leagueId, nameByUserId]);
+  }, [leagueId]);
 
   // Realtime: league, members, picks, scoring
   useEffect(() => {
@@ -210,8 +209,7 @@ export default function LeaguePage() {
       if (standingsTimer) clearTimeout(standingsTimer);
       supabase.removeChannel(channel);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [leagueId, nameByUserId]);
+  }, [leagueId]);
 
   async function joinLeague() {
     if (!leagueId || !userId) return;
