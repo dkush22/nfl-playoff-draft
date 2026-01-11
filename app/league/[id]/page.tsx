@@ -12,9 +12,10 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 
 type Member = { user_id: string; display_name: string; created_at?: string };
-type Player = { id: string; name: string; pos: "QB" | "RB" | "WR" | "TE"; nfl_team: string };
+type Player = { id: string; name: string; pos: "QB" | "RB" | "WR" | "TE"; nfl_team: string; espn_athlete_id?: string };
 type PickRow = { id: string; pick_number: number; user_id: string; player_id: string; created_at: string };
 type Standing = { user_id: string; display_name: string; total_points: number };
+type PlayerPoints = { player_id: string; player_name: string; pos: string; nfl_team: string; total_points: number };
 
 function statusLabel(status: string) {
   if (status === "draft") return "Draft Live";
@@ -36,6 +37,9 @@ export default function LeaguePage() {
 
   const [standings, setStandings] = useState<Standing[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  const [expandedTeams, setExpandedTeams] = useState<Set<string>>(new Set());
+  const [playerPointsByUserId, setPlayerPointsByUserId] = useState<Map<string, PlayerPoints[]>>(new Map());
 
   const [nameInput, setNameInput] = useState("");
   const [joining, setJoining] = useState(false);
@@ -151,6 +155,87 @@ export default function LeaguePage() {
     setStandings(rows);
   }
 
+  // Fetch player-level points for a specific user
+  async function fetchPlayerPoints(targetUserId: string) {
+    if (!leagueId) return;
+
+    // Get all draft picks for this user in this league
+    const { data: userPicks, error: picksError } = await supabase
+      .from("draft_picks")
+      .select("player_id")
+      .eq("league_id", leagueId)
+      .eq("user_id", targetUserId);
+
+    if (picksError || !userPicks || userPicks.length === 0) {
+      console.error(picksError);
+      setPlayerPointsByUserId((prev) => new Map(prev).set(targetUserId, []));
+      return;
+    }
+
+    const playerIds = userPicks.map((p) => p.player_id);
+
+    // Get player info including espn_athlete_id
+    const { data: players, error: playersError } = await supabase
+      .from("players")
+      .select("id, name, pos, nfl_team, espn_athlete_id")
+      .in("id", playerIds);
+
+    if (playersError || !players) {
+      console.error(playersError);
+      return;
+    }
+
+    // Build map of espn_athlete_id to player info
+    const playerInfoMap = new Map(
+      players.map((p) => [p.espn_athlete_id, { id: p.id, name: p.name, pos: p.pos, nfl_team: p.nfl_team }])
+    );
+
+    const athleteIds = players.map((p) => p.espn_athlete_id).filter(Boolean);
+
+    if (athleteIds.length === 0) {
+      setPlayerPointsByUserId((prev) => new Map(prev).set(targetUserId, []));
+      return;
+    }
+
+    // Get all event points for these players
+    const { data: eventPoints, error: pointsError } = await supabase
+      .from("player_event_points")
+      .select("espn_athlete_id, fantasy_points")
+      .in("espn_athlete_id", athleteIds);
+
+    if (pointsError) {
+      console.error(pointsError);
+      return;
+    }
+
+    // Aggregate points by player
+    const pointsByAthleteId = new Map<string, number>();
+    for (const row of eventPoints || []) {
+      const current = pointsByAthleteId.get(row.espn_athlete_id) || 0;
+      pointsByAthleteId.set(row.espn_athlete_id, current + Number(row.fantasy_points));
+    }
+
+    // Build final array
+    const playerPointsArray: PlayerPoints[] = [];
+    for (const [athleteId, totalPoints] of pointsByAthleteId.entries()) {
+      const info = playerInfoMap.get(athleteId);
+      if (info) {
+        playerPointsArray.push({
+          player_id: info.id,
+          player_name: info.name,
+          pos: info.pos,
+          nfl_team: info.nfl_team,
+          total_points: totalPoints,
+        });
+      }
+    }
+
+    // Sort by points descending
+    playerPointsArray.sort((a, b) => b.total_points - a.total_points);
+
+    setPlayerPointsByUserId((prev) => new Map(prev).set(targetUserId, playerPointsArray));
+  }
+
   useEffect(() => {
     if (!leagueId) return;
     refreshStandings();
@@ -202,6 +287,16 @@ export default function LeaguePage() {
         "postgres_changes",
         { event: "*", schema: "public", table: "league_team_event_points", filter: `league_id=eq.${leagueId}` },
         () => scheduleStandingsRefresh()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "player_event_points" },
+        () => {
+          // Refresh player points for all expanded teams
+          expandedTeams.forEach((userId) => {
+            fetchPlayerPoints(userId);
+          });
+        }
       )
       .subscribe();
 
@@ -346,31 +441,93 @@ export default function LeaguePage() {
                 <div className="text-sm text-muted-foreground">No points yet.</div>
               ) : (
                 <div className="space-y-3">
-                  {standings.map((s, idx) => (
-                    <div key={s.user_id} className="flex items-center justify-between rounded-lg border p-3">
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-full border text-sm font-semibold">
-                          {idx + 1}
-                        </div>
-                        <div className="leading-tight">
-                          <div className="font-medium">
-                            {s.display_name}{" "}
-                            {s.user_id === userId ? (
-                              <span className="text-xs text-muted-foreground">(you)</span>
-                            ) : null}
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            Roster: {rosterCountForUser(s.user_id)} players
-                          </div>
-                        </div>
-                      </div>
+                  {standings.map((s, idx) => {
+                    const isExpanded = expandedTeams.has(s.user_id);
+                    const playerPoints = playerPointsByUserId.get(s.user_id) || [];
 
-                      <div className="text-right">
-                        <div className="text-lg font-semibold tabular-nums">{s.total_points.toFixed(2)}</div>
-                        <div className="text-xs text-muted-foreground">points</div>
+                    return (
+                      <div key={s.user_id} className="rounded-lg border">
+                        <button
+                          className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors"
+                          onClick={() => {
+                            const newExpanded = new Set(expandedTeams);
+                            if (isExpanded) {
+                              newExpanded.delete(s.user_id);
+                            } else {
+                              newExpanded.add(s.user_id);
+                              // Fetch player points if not already loaded
+                              if (!playerPointsByUserId.has(s.user_id)) {
+                                fetchPlayerPoints(s.user_id);
+                              }
+                            }
+                            setExpandedTeams(newExpanded);
+                          }}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-8 w-8 items-center justify-center rounded-full border text-sm font-semibold">
+                              {idx + 1}
+                            </div>
+                            <div className="leading-tight text-left">
+                              <div className="font-medium">
+                                {s.display_name}{" "}
+                                {s.user_id === userId ? (
+                                  <span className="text-xs text-muted-foreground">(you)</span>
+                                ) : null}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                Roster: {rosterCountForUser(s.user_id)} players
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-3">
+                            <div className="text-right">
+                              <div className="text-lg font-semibold tabular-nums">{s.total_points.toFixed(2)}</div>
+                              <div className="text-xs text-muted-foreground">points</div>
+                            </div>
+                            <svg
+                              className={`w-5 h-5 transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
+                          </div>
+                        </button>
+
+                        {isExpanded && (
+                          <div className="border-t px-3 py-2 bg-muted/20">
+                            {playerPoints.length === 0 ? (
+                              <div className="text-sm text-muted-foreground py-2">No player points yet.</div>
+                            ) : (
+                              <div className="space-y-1">
+                                {playerPoints.map((pp) => (
+                                  <div
+                                    key={pp.player_id}
+                                    className="flex items-center justify-between py-2 px-2 rounded hover:bg-muted/50"
+                                  >
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <Badge variant="outline" className="text-xs shrink-0">
+                                        {pp.pos}
+                                      </Badge>
+                                      <div className="min-w-0">
+                                        <div className="text-sm font-medium truncate">{pp.player_name}</div>
+                                        <div className="text-xs text-muted-foreground">{pp.nfl_team}</div>
+                                      </div>
+                                    </div>
+                                    <div className="text-sm font-semibold tabular-nums ml-2">
+                                      {pp.total_points.toFixed(2)}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </CardContent>
