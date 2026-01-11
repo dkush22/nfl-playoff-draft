@@ -40,6 +40,7 @@ export default function LeaguePage() {
 
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(new Set());
   const [playerPointsByUserId, setPlayerPointsByUserId] = useState<Map<string, PlayerPoints[]>>(new Map());
+  const [rosterPlayerPoints, setRosterPlayerPoints] = useState<Map<string, number>>(new Map());
 
   const [nameInput, setNameInput] = useState("");
   const [joining, setJoining] = useState(false);
@@ -130,6 +131,17 @@ export default function LeaguePage() {
   async function refreshStandings() {
     if (!leagueId) return;
 
+    // Get member names fresh from database to avoid race conditions
+    const { data: memberData } = await supabase
+      .from("league_members")
+      .select("user_id, display_name")
+      .eq("league_id", leagueId);
+
+    const memberMap = new Map<string, string>();
+    for (const m of memberData || []) {
+      memberMap.set(m.user_id, m.display_name);
+    }
+
     const { data, error } = await supabase
       .from("league_team_event_points")
       .select("user_id, fantasy_points")
@@ -147,7 +159,7 @@ export default function LeaguePage() {
 
     const rows: Standing[] = Array.from(totals.entries()).map(([uid, total_points]) => ({
       user_id: uid,
-      display_name: nameByUserId.get(uid) || "Unknown",
+      display_name: memberMap.get(uid) || "Unknown",
       total_points,
     }));
 
@@ -236,10 +248,62 @@ export default function LeaguePage() {
     setPlayerPointsByUserId((prev) => new Map(prev).set(targetUserId, playerPointsArray));
   }
 
+  // Load player points for all roster displays
+  async function loadRosterPlayerPoints() {
+    if (!leagueId) return;
+
+    // Get all player IDs from picks
+    const playerIds = picks.map(p => p.player_id);
+    if (playerIds.length === 0) return;
+
+    // Get players with espn_athlete_id
+    const { data: players } = await supabase
+      .from("players")
+      .select("id, espn_athlete_id")
+      .in("id", playerIds);
+
+    if (!players) return;
+
+    const athleteIds = players.map(p => p.espn_athlete_id).filter(Boolean);
+    if (athleteIds.length === 0) return;
+
+    // Get all event points
+    const { data: eventPoints } = await supabase
+      .from("player_event_points")
+      .select("espn_athlete_id, fantasy_points")
+      .in("espn_athlete_id", athleteIds);
+
+    if (!eventPoints) return;
+
+    // Aggregate by athlete ID
+    const pointsByAthleteId = new Map<string, number>();
+    for (const row of eventPoints) {
+      const current = pointsByAthleteId.get(row.espn_athlete_id) || 0;
+      pointsByAthleteId.set(row.espn_athlete_id, current + Number(row.fantasy_points));
+    }
+
+    // Map to player IDs
+    const pointsByPlayerId = new Map<string, number>();
+    for (const player of players) {
+      if (player.espn_athlete_id) {
+        const points = pointsByAthleteId.get(player.espn_athlete_id) || 0;
+        pointsByPlayerId.set(player.id, points);
+      }
+    }
+
+    setRosterPlayerPoints(pointsByPlayerId);
+  }
+
   useEffect(() => {
     if (!leagueId) return;
     refreshStandings();
   }, [leagueId]);
+
+  useEffect(() => {
+    if (picks.length > 0) {
+      loadRosterPlayerPoints();
+    }
+  }, [picks]);
 
   // Realtime: league, members, picks, scoring
   useEffect(() => {
@@ -296,6 +360,8 @@ export default function LeaguePage() {
           expandedTeams.forEach((userId) => {
             fetchPlayerPoints(userId);
           });
+          // Also refresh roster player points
+          loadRosterPlayerPoints();
         }
       )
       .subscribe();
@@ -427,34 +493,34 @@ export default function LeaguePage() {
           </div>
         </div>
 
-      <div className="mx-auto max-w-6xl px-6 pb-16 -mt-6 space-y-8">
+      <div className="mx-auto max-w-7xl px-6 pb-16 -mt-6 space-y-8">
 
-        {/* Two-column: Standings + Join */}
-        <div className="grid gap-6 md:grid-cols-3">
-          <Card className="md:col-span-2 shadow-xl border-2">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-lg">Standings</CardTitle>
-                <Button asChild size="sm" variant="outline">
-                  <Link href={`/league/${leagueId}/standings`}>
-                    📊 View Full Stats
-                  </Link>
-                </Button>
-              </div>
-            </CardHeader>
+        {/* Standings - Full Width */}
+        <Card className="shadow-xl border-2">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-2xl">Standings</CardTitle>
+              <Button asChild size="sm" variant="outline">
+                <Link href={`/league/${leagueId}/standings`}>
+                  📊 View Full Stats
+                </Link>
+              </Button>
+            </div>
+          </CardHeader>
             <CardContent>
               {standings.length === 0 ? (
                 <div className="text-sm text-muted-foreground">No points yet.</div>
               ) : (
-                <div className="space-y-3">
+                <div className="space-y-2">
                   {standings.map((s, idx) => {
                     const isExpanded = expandedTeams.has(s.user_id);
                     const playerPoints = playerPointsByUserId.get(s.user_id) || [];
+                    const rankBgColor = idx === 0 ? "bg-yellow-500/10 border-yellow-500/30" : idx === 1 ? "bg-gray-400/10 border-gray-400/30" : idx === 2 ? "bg-orange-600/10 border-orange-600/30" : "border-border";
 
                     return (
-                      <div key={s.user_id} className="rounded-lg border">
+                      <div key={s.user_id} className={`rounded-lg border-2 ${rankBgColor}`}>
                         <button
-                          className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors"
+                          className="w-full flex items-center justify-between p-4 hover:bg-muted/50 transition-colors"
                           onClick={() => {
                             const newExpanded = new Set(expandedTeams);
                             if (isExpanded) {
@@ -469,27 +535,32 @@ export default function LeaguePage() {
                             setExpandedTeams(newExpanded);
                           }}
                         >
-                          <div className="flex items-center gap-3">
-                            <div className="flex h-8 w-8 items-center justify-center rounded-full border text-sm font-semibold">
+                          <div className="flex items-center gap-4">
+                            <div className={`flex h-10 w-10 items-center justify-center rounded-full ${
+                              idx === 0 ? "bg-yellow-500 text-yellow-950" :
+                              idx === 1 ? "bg-gray-400 text-gray-950" :
+                              idx === 2 ? "bg-orange-600 text-orange-50" :
+                              "bg-muted"
+                            } text-base font-bold`}>
                               {idx + 1}
                             </div>
                             <div className="leading-tight text-left">
-                              <div className="font-medium">
+                              <div className="font-semibold text-base">
                                 {s.display_name}{" "}
                                 {s.user_id === userId ? (
-                                  <span className="text-xs text-muted-foreground">(you)</span>
+                                  <span className="text-xs text-muted-foreground font-normal">(you)</span>
                                 ) : null}
                               </div>
                               <div className="text-xs text-muted-foreground">
-                                Roster: {rosterCountForUser(s.user_id)} players
+                                {rosterCountForUser(s.user_id)} players
                               </div>
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-4">
                             <div className="text-right">
-                              <div className="text-lg font-semibold tabular-nums">{s.total_points.toFixed(2)}</div>
-                              <div className="text-xs text-muted-foreground">points</div>
+                              <div className="text-2xl font-bold tabular-nums text-primary">{s.total_points.toFixed(2)}</div>
+                              <div className="text-[10px] text-muted-foreground uppercase tracking-wide">points</div>
                             </div>
                             <svg
                               className={`w-5 h-5 transition-transform ${isExpanded ? "rotate-180" : ""}`}
@@ -537,63 +608,17 @@ export default function LeaguePage() {
                 </div>
               )}
             </CardContent>
-          </Card>
-
-          <Card className="shadow-xl border-2">
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                {isJoined ? "✓ You're in!" : "Join this league"}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {isJoined ? (
-                <div className="space-y-3">
-                  <div className="rounded-lg bg-primary/10 p-4 border border-primary/20">
-                    <p className="text-sm font-medium text-foreground mb-1">
-                      {myMember?.display_name || "Player"}
-                    </p>
-                    <p className="text-xs text-muted-foreground">Your display name</p>
-                  </div>
-                  <Separator />
-                  <p className="text-xs text-muted-foreground">
-                    💡 Tip: Open the Draft Room to see live picks and draft order.
-                  </p>
-                </div>
-              ) : (
-                <>
-                  <p className="text-sm text-muted-foreground">
-                    Pick a display name to join this league.
-                  </p>
-                  <div className="space-y-2">
-                    <Input
-                      placeholder="Your display name"
-                      value={nameInput}
-                      onChange={(e) => setNameInput(e.target.value)}
-                      disabled={joining || leagueFull}
-                    />
-                    <Button className="w-full" onClick={joinLeague} disabled={joining || leagueFull}>
-                      {leagueFull ? "League full" : joining ? "Joining..." : "Join League"}
-                    </Button>
-                  </div>
-                </>
-              )}
-
-              {leagueFull && !isJoined ? (
-                <p className="text-xs text-muted-foreground">This league is full. Ask the commissioner to open spots.</p>
-              ) : null}
-            </CardContent>
-          </Card>
-        </div>
+        </Card>
 
         {/* Rosters */}
         <Card className="shadow-xl border-2">
           <CardHeader className="space-y-1">
-            <CardTitle className="text-lg flex items-center gap-2">
+            <CardTitle className="text-2xl flex items-center gap-2">
               <span>📋</span>
               Team Rosters
             </CardTitle>
             <p className="text-sm text-muted-foreground">
-              Each team's drafted players. Updates live as picks come in.
+              Each team's drafted players with fantasy points. Updates live.
             </p>
           </CardHeader>
           <CardContent>
@@ -602,20 +627,31 @@ export default function LeaguePage() {
                 const roster = rosterByUserId.get(m.user_id) || [];
                 const isMe = m.user_id === userId;
 
+                // Calculate total points for this team
+                const teamTotalPoints = roster.reduce((sum, pick) => {
+                  const points = rosterPlayerPoints.get(pick.player_id) || 0;
+                  return sum + points;
+                }, 0);
+
                 return (
                   <Card key={m.user_id} className="overflow-hidden border-2 card-hover">
-                    <CardHeader className="pb-3">
+                    <CardHeader className="pb-3 bg-gradient-to-br from-muted/30 to-muted/10">
                       <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="font-semibold leading-tight">
+                        <div className="flex-1">
+                          <div className="font-semibold text-base leading-tight">
                             {m.display_name}{" "}
                             {isMe ? <span className="text-xs text-muted-foreground">(you)</span> : null}
                           </div>
-                          <div className="text-xs text-muted-foreground">
+                          <div className="text-xs text-muted-foreground mt-1">
                             {roster.length} player{roster.length === 1 ? "" : "s"}
                           </div>
                         </div>
-                        <Badge variant="secondary">{roster.length}</Badge>
+                        <div className="text-right">
+                          <div className="text-lg font-bold text-primary tabular-nums">
+                            {teamTotalPoints.toFixed(2)}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground">total pts</div>
+                        </div>
                       </div>
                     </CardHeader>
 
@@ -628,14 +664,23 @@ export default function LeaguePage() {
                             const pl = playersById.get(p.player_id);
                             const label = pl ? `${pl.name}` : p.player_id;
                             const meta = pl ? `${pl.pos} • ${pl.nfl_team}` : "";
+                            const points = rosterPlayerPoints.get(p.player_id) || 0;
 
                             return (
-                              <div key={p.id} className="flex items-center justify-between rounded-md border px-3 py-2">
-                                <div className="min-w-0">
+                              <div key={p.id} className="flex items-center justify-between rounded-md border px-3 py-2 hover:bg-muted/50 transition-colors">
+                                <div className="min-w-0 flex-1">
                                   <div className="truncate text-sm font-medium">{label}</div>
                                   {meta ? <div className="text-xs text-muted-foreground">{meta}</div> : null}
                                 </div>
-                                <div className="ml-3 text-xs text-muted-foreground tabular-nums">#{p.pick_number}</div>
+                                <div className="ml-3 flex items-center gap-3">
+                                  <div className="text-right">
+                                    <div className="text-sm font-semibold tabular-nums text-primary">
+                                      {points.toFixed(2)}
+                                    </div>
+                                    <div className="text-[10px] text-muted-foreground">pts</div>
+                                  </div>
+                                  <div className="text-xs text-muted-foreground tabular-nums">#{p.pick_number}</div>
+                                </div>
                               </div>
                             );
                           })}
