@@ -40,6 +40,7 @@ export default function LeaguePage() {
 
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(new Set());
   const [playerPointsByUserId, setPlayerPointsByUserId] = useState<Map<string, PlayerPoints[]>>(new Map());
+  const [rosterPlayerPoints, setRosterPlayerPoints] = useState<Map<string, number>>(new Map());
 
   const [nameInput, setNameInput] = useState("");
   const [joining, setJoining] = useState(false);
@@ -130,6 +131,17 @@ export default function LeaguePage() {
   async function refreshStandings() {
     if (!leagueId) return;
 
+    // Get member names fresh from database to avoid race conditions
+    const { data: memberData } = await supabase
+      .from("league_members")
+      .select("user_id, display_name")
+      .eq("league_id", leagueId);
+
+    const memberMap = new Map<string, string>();
+    for (const m of memberData || []) {
+      memberMap.set(m.user_id, m.display_name);
+    }
+
     const { data, error } = await supabase
       .from("league_team_event_points")
       .select("user_id, fantasy_points")
@@ -147,7 +159,7 @@ export default function LeaguePage() {
 
     const rows: Standing[] = Array.from(totals.entries()).map(([uid, total_points]) => ({
       user_id: uid,
-      display_name: nameByUserId.get(uid) || "Unknown",
+      display_name: memberMap.get(uid) || "Unknown",
       total_points,
     }));
 
@@ -236,10 +248,62 @@ export default function LeaguePage() {
     setPlayerPointsByUserId((prev) => new Map(prev).set(targetUserId, playerPointsArray));
   }
 
+  // Load player points for all roster displays
+  async function loadRosterPlayerPoints() {
+    if (!leagueId) return;
+
+    // Get all player IDs from picks
+    const playerIds = picks.map(p => p.player_id);
+    if (playerIds.length === 0) return;
+
+    // Get players with espn_athlete_id
+    const { data: players } = await supabase
+      .from("players")
+      .select("id, espn_athlete_id")
+      .in("id", playerIds);
+
+    if (!players) return;
+
+    const athleteIds = players.map(p => p.espn_athlete_id).filter(Boolean);
+    if (athleteIds.length === 0) return;
+
+    // Get all event points
+    const { data: eventPoints } = await supabase
+      .from("player_event_points")
+      .select("espn_athlete_id, fantasy_points")
+      .in("espn_athlete_id", athleteIds);
+
+    if (!eventPoints) return;
+
+    // Aggregate by athlete ID
+    const pointsByAthleteId = new Map<string, number>();
+    for (const row of eventPoints) {
+      const current = pointsByAthleteId.get(row.espn_athlete_id) || 0;
+      pointsByAthleteId.set(row.espn_athlete_id, current + Number(row.fantasy_points));
+    }
+
+    // Map to player IDs
+    const pointsByPlayerId = new Map<string, number>();
+    for (const player of players) {
+      if (player.espn_athlete_id) {
+        const points = pointsByAthleteId.get(player.espn_athlete_id) || 0;
+        pointsByPlayerId.set(player.id, points);
+      }
+    }
+
+    setRosterPlayerPoints(pointsByPlayerId);
+  }
+
   useEffect(() => {
     if (!leagueId) return;
     refreshStandings();
   }, [leagueId]);
+
+  useEffect(() => {
+    if (picks.length > 0) {
+      loadRosterPlayerPoints();
+    }
+  }, [picks]);
 
   // Realtime: league, members, picks, scoring
   useEffect(() => {
@@ -296,6 +360,8 @@ export default function LeaguePage() {
           expandedTeams.forEach((userId) => {
             fetchPlayerPoints(userId);
           });
+          // Also refresh roster player points
+          loadRosterPlayerPoints();
         }
       )
       .subscribe();
@@ -373,25 +439,34 @@ export default function LeaguePage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="mx-auto max-w-6xl px-6 py-10 space-y-8">
-        {/* Header */}
-        <Card>
-          <CardHeader className="space-y-2">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="space-y-1">
-                <CardTitle className="text-2xl">{league.name}</CardTitle>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="secondary">{statusLabel(leagueStatus)}</Badge>
-                  <span className="text-sm text-muted-foreground">
-                    Teams: <span className="font-medium text-foreground">{members.length}</span>/
-                    <span className="font-medium text-foreground">{league.num_teams}</span>
-                  </span>
-                  {leagueFull ? <Badge variant="outline">Full</Badge> : <Badge variant="outline">Open</Badge>}
-                </div>
+      {/* League Header Banner */}
+      <div className="gradient-field py-6 sm:py-8 mb-6 sm:mb-8">
+        <div className="mx-auto max-w-6xl px-4 sm:px-6">
+          <div className="flex flex-col gap-3">
+            <div className="space-y-2">
+              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-primary-foreground">{league.name}</h1>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="secondary" className="bg-secondary/90 text-xs sm:text-sm">{statusLabel(leagueStatus)}</Badge>
+                <span className="text-xs sm:text-sm text-primary-foreground/80">
+                  <span className="font-semibold text-primary-foreground">{members.length}</span>
+                  {" / "}
+                  <span className="font-semibold text-primary-foreground">{league.num_teams}</span>
+                  {" teams"}
+                </span>
+                {leagueFull ? (
+                  <Badge variant="outline" className="border-primary-foreground/30 text-primary-foreground text-xs sm:text-sm">
+                    🔒 Full
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="border-primary-foreground/30 text-primary-foreground text-xs sm:text-sm">
+                    ✓ Open
+                  </Badge>
+                )}
               </div>
+            </div>
 
-              <div className="flex flex-wrap gap-2">
-                <Button asChild>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <Button asChild className="gradient-gold text-foreground shadow-lg text-sm sm:text-base">
                   <Link href={`/league/${leagueId}/draft`}>
                     {leagueStatus === "draft" ? "Go to Draft Room" : "View Draft Results"}
                   </Link>
@@ -399,56 +474,54 @@ export default function LeaguePage() {
 
                 {!leagueFull && (
                   <Button
-                    variant="secondary"
+                    variant="outline"
+                    className="border-primary-foreground/30 text-primary-foreground hover:bg-primary-foreground/10 text-sm sm:text-base"
                     onClick={async () => {
                       try {
                         await navigator.clipboard.writeText(shareUrl);
                         alert("Invite link copied");
                       } catch {
-                        alert("Couldn’t copy. You can copy the URL from the address bar.");
+                        alert("Couldn't copy. You can copy the URL from the address bar.");
                       }
                     }}
                   >
-                    Copy invite link
+                    📋 Copy invite link
                   </Button>
                 )}
               </div>
             </div>
+          </div>
+        </div>
+
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 pb-12 sm:pb-16 -mt-4 sm:-mt-6 space-y-6 sm:space-y-8">
+
+        {/* Standings - Full Width */}
+        <Card className="shadow-xl border-2">
+          <CardHeader className="pb-3 sm:pb-6">
+            <div className="flex items-center justify-between gap-2">
+              <CardTitle className="text-xl sm:text-2xl">Standings</CardTitle>
+              <Button asChild size="sm" variant="outline" className="text-xs sm:text-sm">
+                <Link href={`/league/${leagueId}/standings`}>
+                  <span className="hidden sm:inline">📊 View Full Stats</span>
+                  <span className="sm:hidden">📊 Stats</span>
+                </Link>
+              </Button>
+            </div>
           </CardHeader>
-
-          {!leagueFull && (
-            <CardContent>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-sm text-muted-foreground">
-                  Invite friends before the league fills. Once full, invites disappear.
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  League ID: <span className="font-mono">{league.id}</span>
-                </p>
-              </div>
-            </CardContent>
-          )}
-        </Card>
-
-        {/* Two-column: Standings + Join */}
-        <div className="grid gap-6 md:grid-cols-3">
-          <Card className="md:col-span-2">
-            <CardHeader>
-              <CardTitle className="text-lg">Standings</CardTitle>
-            </CardHeader>
             <CardContent>
               {standings.length === 0 ? (
                 <div className="text-sm text-muted-foreground">No points yet.</div>
               ) : (
-                <div className="space-y-3">
+                <div className="space-y-2">
                   {standings.map((s, idx) => {
                     const isExpanded = expandedTeams.has(s.user_id);
                     const playerPoints = playerPointsByUserId.get(s.user_id) || [];
+                    const rankBgColor = idx === 0 ? "bg-yellow-500/10 border-yellow-500/30" : idx === 1 ? "bg-gray-400/10 border-gray-400/30" : idx === 2 ? "bg-orange-600/10 border-orange-600/30" : "border-border";
 
                     return (
-                      <div key={s.user_id} className="rounded-lg border">
+                      <div key={s.user_id} className={`rounded-lg border-2 ${rankBgColor}`}>
                         <button
-                          className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors"
+                          className="w-full flex items-center justify-between p-3 sm:p-4 hover:bg-muted/50 transition-colors"
                           onClick={() => {
                             const newExpanded = new Set(expandedTeams);
                             if (isExpanded) {
@@ -463,30 +536,35 @@ export default function LeaguePage() {
                             setExpandedTeams(newExpanded);
                           }}
                         >
-                          <div className="flex items-center gap-3">
-                            <div className="flex h-8 w-8 items-center justify-center rounded-full border text-sm font-semibold">
+                          <div className="flex items-center gap-2 sm:gap-4 min-w-0">
+                            <div className={`flex h-8 w-8 sm:h-10 sm:w-10 items-center justify-center rounded-full ${
+                              idx === 0 ? "bg-yellow-500 text-yellow-950" :
+                              idx === 1 ? "bg-gray-400 text-gray-950" :
+                              idx === 2 ? "bg-orange-600 text-orange-50" :
+                              "bg-muted"
+                            } text-sm sm:text-base font-bold shrink-0`}>
                               {idx + 1}
                             </div>
-                            <div className="leading-tight text-left">
-                              <div className="font-medium">
+                            <div className="leading-tight text-left min-w-0">
+                              <div className="font-semibold text-sm sm:text-base truncate">
                                 {s.display_name}{" "}
                                 {s.user_id === userId ? (
-                                  <span className="text-xs text-muted-foreground">(you)</span>
+                                  <span className="text-xs text-muted-foreground font-normal">(you)</span>
                                 ) : null}
                               </div>
                               <div className="text-xs text-muted-foreground">
-                                Roster: {rosterCountForUser(s.user_id)} players
+                                {rosterCountForUser(s.user_id)} players
                               </div>
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-2 sm:gap-4 shrink-0">
                             <div className="text-right">
-                              <div className="text-lg font-semibold tabular-nums">{s.total_points.toFixed(2)}</div>
-                              <div className="text-xs text-muted-foreground">points</div>
+                              <div className="text-lg sm:text-2xl font-bold tabular-nums text-primary">{s.total_points.toFixed(2)}</div>
+                              <div className="text-[10px] text-muted-foreground uppercase tracking-wide">points</div>
                             </div>
                             <svg
-                              className={`w-5 h-5 transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                              className={`w-4 h-4 sm:w-5 sm:h-5 transition-transform ${isExpanded ? "rotate-180" : ""}`}
                               fill="none"
                               stroke="currentColor"
                               viewBox="0 0 24 24"
@@ -531,77 +609,50 @@ export default function LeaguePage() {
                 </div>
               )}
             </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">{isJoined ? "You’re in" : "Join this league"}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {isJoined ? (
-                <div className="space-y-2">
-                  <p className="text-sm text-muted-foreground">
-                    Joined as <span className="font-medium text-foreground">{myMember?.display_name || "Player"}</span>.
-                  </p>
-                  <Separator />
-                  <p className="text-xs text-muted-foreground">
-                    Tip: open the Draft Room to see live picks and draft order.
-                  </p>
-                </div>
-              ) : (
-                <>
-                  <p className="text-sm text-muted-foreground">
-                    Pick a display name. You can change it later (we’ll add that).
-                  </p>
-                  <div className="space-y-2">
-                    <Input
-                      placeholder="Your display name"
-                      value={nameInput}
-                      onChange={(e) => setNameInput(e.target.value)}
-                      disabled={joining || leagueFull}
-                    />
-                    <Button className="w-full" onClick={joinLeague} disabled={joining || leagueFull}>
-                      {leagueFull ? "League full" : joining ? "Joining..." : "Join League"}
-                    </Button>
-                  </div>
-                </>
-              )}
-
-              {leagueFull && !isJoined ? (
-                <p className="text-xs text-muted-foreground">This league is full. Ask the commissioner to open spots.</p>
-              ) : null}
-            </CardContent>
-          </Card>
-        </div>
+        </Card>
 
         {/* Rosters */}
-        <Card>
-          <CardHeader className="space-y-1">
-            <CardTitle className="text-lg">Rosters</CardTitle>
-            <p className="text-sm text-muted-foreground">
-              Each team’s drafted players. Updates live as picks come in.
+        <Card className="shadow-xl border-2">
+          <CardHeader className="space-y-1 pb-4 sm:pb-6">
+            <CardTitle className="text-xl sm:text-2xl flex items-center gap-2">
+              <span>📋</span>
+              Team Rosters
+            </CardTitle>
+            <p className="text-xs sm:text-sm text-muted-foreground">
+              Each team's drafted players with fantasy points. Updates live.
             </p>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
               {members.map((m) => {
                 const roster = rosterByUserId.get(m.user_id) || [];
                 const isMe = m.user_id === userId;
 
+                // Calculate total points for this team
+                const teamTotalPoints = roster.reduce((sum, pick) => {
+                  const points = rosterPlayerPoints.get(pick.player_id) || 0;
+                  return sum + points;
+                }, 0);
+
                 return (
-                  <Card key={m.user_id} className="overflow-hidden">
-                    <CardHeader className="pb-3">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="font-semibold leading-tight">
+                  <Card key={m.user_id} className="overflow-hidden border-2 card-hover">
+                    <CardHeader className="pb-2 sm:pb-3 bg-gradient-to-br from-muted/30 to-muted/10">
+                      <div className="flex items-start justify-between gap-2 sm:gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="font-semibold text-sm sm:text-base leading-tight truncate">
                             {m.display_name}{" "}
                             {isMe ? <span className="text-xs text-muted-foreground">(you)</span> : null}
                           </div>
-                          <div className="text-xs text-muted-foreground">
+                          <div className="text-xs text-muted-foreground mt-1">
                             {roster.length} player{roster.length === 1 ? "" : "s"}
                           </div>
                         </div>
-                        <Badge variant="secondary">{roster.length}</Badge>
+                        <div className="text-right shrink-0">
+                          <div className="text-base sm:text-lg font-bold text-primary tabular-nums">
+                            {teamTotalPoints.toFixed(2)}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground">total pts</div>
+                        </div>
                       </div>
                     </CardHeader>
 
@@ -609,19 +660,28 @@ export default function LeaguePage() {
                       {roster.length === 0 ? (
                         <div className="text-sm text-muted-foreground">No picks yet.</div>
                       ) : (
-                        <div className="space-y-2">
+                        <div className="space-y-1.5 sm:space-y-2">
                           {roster.map((p) => {
                             const pl = playersById.get(p.player_id);
                             const label = pl ? `${pl.name}` : p.player_id;
                             const meta = pl ? `${pl.pos} • ${pl.nfl_team}` : "";
+                            const points = rosterPlayerPoints.get(p.player_id) || 0;
 
                             return (
-                              <div key={p.id} className="flex items-center justify-between rounded-md border px-3 py-2">
-                                <div className="min-w-0">
-                                  <div className="truncate text-sm font-medium">{label}</div>
-                                  {meta ? <div className="text-xs text-muted-foreground">{meta}</div> : null}
+                              <div key={p.id} className="flex items-center justify-between rounded-md border px-2 sm:px-3 py-1.5 sm:py-2 hover:bg-muted/50 transition-colors">
+                                <div className="min-w-0 flex-1">
+                                  <div className="truncate text-xs sm:text-sm font-medium">{label}</div>
+                                  {meta ? <div className="text-[10px] sm:text-xs text-muted-foreground">{meta}</div> : null}
                                 </div>
-                                <div className="ml-3 text-xs text-muted-foreground tabular-nums">#{p.pick_number}</div>
+                                <div className="ml-2 sm:ml-3 flex items-center gap-2 sm:gap-3 shrink-0">
+                                  <div className="text-right">
+                                    <div className="text-xs sm:text-sm font-semibold tabular-nums text-primary">
+                                      {points.toFixed(2)}
+                                    </div>
+                                    <div className="text-[9px] sm:text-[10px] text-muted-foreground">pts</div>
+                                  </div>
+                                  <div className="text-[10px] sm:text-xs text-muted-foreground tabular-nums">#{p.pick_number}</div>
+                                </div>
                               </div>
                             );
                           })}
