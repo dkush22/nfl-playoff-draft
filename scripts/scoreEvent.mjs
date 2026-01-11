@@ -220,12 +220,12 @@ async function updateLeagueTeamPoints() {
   // Get all leagues
   const { data: leagues, error: leaguesErr } = await supabase
     .from("leagues")
-    .select("id");
+    .select("id, name");
 
   if (leaguesErr) throw leaguesErr;
 
   if (!leagues || leagues.length === 0) {
-    console.log("No leagues found");
+    console.log("❌ No leagues found in database");
     return;
   }
 
@@ -236,6 +236,9 @@ async function updateLeagueTeamPoints() {
   // For each league, calculate team points
   for (const league of leagues) {
     const leagueId = league.id;
+    const leagueName = league.name || leagueId;
+
+    console.log(`\n  Processing: ${leagueName}`);
 
     // Get all draft picks for this league
     const { data: picks, error: picksErr } = await supabase
@@ -244,14 +247,16 @@ async function updateLeagueTeamPoints() {
       .eq("league_id", leagueId);
 
     if (picksErr) {
-      console.error(`Error fetching picks for league ${leagueId}:`, picksErr);
+      console.error(`    ❌ Error fetching picks:`, picksErr);
       continue;
     }
 
     if (!picks || picks.length === 0) {
-      console.log(`  League ${leagueId}: No picks yet, skipping`);
+      console.log(`    ⚠️  No draft picks yet - skipping`);
       continue;
     }
+
+    console.log(`    Found ${picks.length} draft pick(s)`);
 
     // Get player IDs and build user->players map
     const playerIds = picks.map((p) => p.player_id);
@@ -266,18 +271,20 @@ async function updateLeagueTeamPoints() {
     // Get player info to get espn_athlete_ids
     const { data: players, error: playersErr } = await supabase
       .from("players")
-      .select("id, espn_athlete_id")
+      .select("id, espn_athlete_id, name")
       .in("id", playerIds);
 
     if (playersErr) {
-      console.error(`Error fetching players for league ${leagueId}:`, playersErr);
+      console.error(`    ❌ Error fetching players:`, playersErr);
       continue;
     }
 
     if (!players || players.length === 0) {
-      console.log(`  League ${leagueId}: No player data found`);
+      console.log(`    ❌ No player data found for ${playerIds.length} player IDs`);
       continue;
     }
+
+    console.log(`    Found ${players.length} player(s) in database`);
 
     // Build map of player_id -> espn_athlete_id
     const playerToAthleteMap = new Map(
@@ -289,10 +296,18 @@ async function updateLeagueTeamPoints() {
       .map((p) => p.espn_athlete_id)
       .filter(Boolean);
 
+    const playersWithoutAthleteId = players.filter(p => !p.espn_athlete_id);
+    if (playersWithoutAthleteId.length > 0) {
+      console.log(`    ⚠️  ${playersWithoutAthleteId.length} player(s) missing espn_athlete_id:`,
+        playersWithoutAthleteId.map(p => p.name).join(", "));
+    }
+
     if (athleteIds.length === 0) {
-      console.log(`  League ${leagueId}: No athlete IDs found`);
+      console.log(`    ❌ No players have espn_athlete_id set - cannot calculate points`);
       continue;
     }
+
+    console.log(`    Querying points for ${athleteIds.length} athlete ID(s)`);
 
     // Get all fantasy points for these athletes
     const { data: eventPoints, error: pointsErr } = await supabase
@@ -301,9 +316,11 @@ async function updateLeagueTeamPoints() {
       .in("espn_athlete_id", athleteIds);
 
     if (pointsErr) {
-      console.error(`Error fetching points for league ${leagueId}:`, pointsErr);
+      console.error(`    ❌ Error fetching points:`, pointsErr);
       continue;
     }
+
+    console.log(`    Found ${(eventPoints || []).length} point record(s) from player_event_points`);
 
     // Build map of espn_athlete_id -> total points
     const athletePointsMap = new Map();
@@ -337,20 +354,28 @@ async function updateLeagueTeamPoints() {
 
     // Upsert team points for this league
     if (teamPointsRows.length > 0) {
+      console.log(`    Upserting ${teamPointsRows.length} team point record(s)...`);
+
       const { error: upsertErr } = await supabase
         .from("league_team_event_points")
         .upsert(teamPointsRows, { onConflict: "league_id,user_id" });
 
       if (upsertErr) {
-        console.error(`Error upserting team points for league ${leagueId}:`, upsertErr);
+        console.error(`    ❌ Error upserting team points:`, upsertErr);
       } else {
-        console.log(`  League ${leagueId}: Updated ${teamPointsRows.length} team(s)`);
+        console.log(`    ✅ Successfully updated ${teamPointsRows.length} team(s)`);
+        // Show the points for verification
+        teamPointsRows.forEach(row => {
+          console.log(`       User ${row.user_id.substring(0, 8)}... = ${row.fantasy_points} points`);
+        });
         totalUpdates += teamPointsRows.length;
       }
+    } else {
+      console.log(`    ⚠️  No team points to update`);
     }
   }
 
-  console.log(`✓ Updated ${totalUpdates} team point record(s) across all leagues\n`);
+  console.log(`\n${totalUpdates > 0 ? '✅' : '⚠️'}  Updated ${totalUpdates} team point record(s) across all leagues\n`);
 }
 
 main().catch((e) => {
