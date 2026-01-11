@@ -433,7 +433,14 @@ export default function LeaguePage() {
         <div className="grid gap-6 md:grid-cols-3">
           <Card className="md:col-span-2 shadow-xl border-2">
             <CardHeader>
-              <CardTitle className="text-lg">Standings</CardTitle>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg">Standings</CardTitle>
+                <Button asChild size="sm" variant="outline">
+                  <Link href={`/league/${leagueId}/standings`}>
+                    📊 View Full Stats
+                  </Link>
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               {standings.length === 0 ? (
