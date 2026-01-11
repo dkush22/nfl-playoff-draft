@@ -203,7 +203,7 @@ async function main() {
   console.log(`✓ Updated player_event_points for ${pointsRows.length} players`);
 
   // Update league team points
-  await updateLeagueTeamPoints();
+  await updateLeagueTeamPoints(String(eventId));
 
   // Show top 20 for quick sanity
   const top = pointsRows
@@ -214,8 +214,8 @@ async function main() {
   console.table(top);
 }
 
-async function updateLeagueTeamPoints() {
-  console.log("\n📊 Updating league team points...");
+async function updateLeagueTeamPoints(eventId) {
+  console.log(`\n📊 Updating league team points for event ${eventId}...`);
 
   // Get all leagues
   const { data: leagues, error: leaguesErr } = await supabase
@@ -307,12 +307,13 @@ async function updateLeagueTeamPoints() {
       continue;
     }
 
-    console.log(`    Querying points for ${athleteIds.length} athlete ID(s)`);
+    console.log(`    Querying points for ${athleteIds.length} athlete ID(s) for this event`);
 
-    // Get all fantasy points for these athletes
+    // Get fantasy points for these athletes FOR THIS EVENT ONLY
     const { data: eventPoints, error: pointsErr } = await supabase
       .from("player_event_points")
       .select("espn_athlete_id, fantasy_points")
+      .eq("event_id", eventId)
       .in("espn_athlete_id", athleteIds);
 
     if (pointsErr) {
@@ -320,7 +321,7 @@ async function updateLeagueTeamPoints() {
       continue;
     }
 
-    console.log(`    Found ${(eventPoints || []).length} point record(s) from player_event_points`);
+    console.log(`    Found ${(eventPoints || []).length} point record(s) from player_event_points for this event`);
 
     // Build map of espn_athlete_id -> total points
     const athletePointsMap = new Map();
@@ -346,21 +347,23 @@ async function updateLeagueTeamPoints() {
       }
 
       teamPointsRows.push({
+        event_id: eventId,
         league_id: leagueId,
         user_id: userId,
         fantasy_points: Number(totalPoints.toFixed(2)),
       });
     }
 
-    // Update team points for this league (delete old records, insert new ones)
+    // Update team points for this league and event (delete old records for this event, insert new ones)
     if (teamPointsRows.length > 0) {
-      console.log(`    Updating ${teamPointsRows.length} team point record(s)...`);
+      console.log(`    Updating ${teamPointsRows.length} team point record(s) for this event...`);
 
-      // First, delete existing records for this league
+      // First, delete existing records for this league and event (in case we're re-running)
       const { error: deleteErr } = await supabase
         .from("league_team_event_points")
         .delete()
-        .eq("league_id", leagueId);
+        .eq("league_id", leagueId)
+        .eq("event_id", eventId);
 
       if (deleteErr) {
         console.error(`    ❌ Error deleting old team points:`, deleteErr);
@@ -373,16 +376,16 @@ async function updateLeagueTeamPoints() {
         if (insertErr) {
           console.error(`    ❌ Error inserting team points:`, insertErr);
         } else {
-          console.log(`    ✅ Successfully updated ${teamPointsRows.length} team(s)`);
+          console.log(`    ✅ Successfully updated ${teamPointsRows.length} team(s) for this event`);
           // Show the points for verification
           teamPointsRows.forEach(row => {
-            console.log(`       User ${row.user_id.substring(0, 8)}... = ${row.fantasy_points} points`);
+            console.log(`       User ${row.user_id.substring(0, 8)}... = ${row.fantasy_points} points for this event`);
           });
           totalUpdates += teamPointsRows.length;
         }
       }
     } else {
-      console.log(`    ⚠️  No team points to update`);
+      console.log(`    ⚠️  No team points to update (no players scored in this event)`);
     }
   }
 
