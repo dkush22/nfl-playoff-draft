@@ -164,15 +164,21 @@ async function upsertEvent(eventId, summaryJson) {
   const awayTeamAbbr = awayTeam?.team?.abbreviation ?? null;
   const awayScore = awayTeam?.score ? parseInt(awayTeam.score, 10) : null;
 
-  // Determine winner (only if game is final and not tied)
+  // Determine winner (check competitor.winner field first, then scores)
   let winnerId = null;
-  if (status === "STATUS_FINAL" && homeScore !== null && awayScore !== null) {
-    if (homeScore > awayScore) {
-      winnerId = homeTeamId;
-    } else if (awayScore > homeScore) {
-      winnerId = awayTeamId;
+  if (status === "STATUS_FINAL") {
+    // ESPN marks the winner in the competitor object
+    const winningCompetitor = competitors.find(c => c.winner === true);
+    if (winningCompetitor) {
+      winnerId = winningCompetitor.team?.id ?? null;
+    } else if (homeScore !== null && awayScore !== null) {
+      // Fallback to score comparison
+      if (homeScore > awayScore) {
+        winnerId = homeTeamId;
+      } else if (awayScore > homeScore) {
+        winnerId = awayTeamId;
+      }
     }
-    // If tied, winnerId remains null
   }
 
   const { error } = await supabase.from("nfl_events").upsert(
@@ -205,6 +211,7 @@ async function upsertEvent(eventId, summaryJson) {
       ? `${homeTeamAbbr} ${homeScore} - ${awayScore} ${awayTeamAbbr}`
       : `${homeTeamAbbr} vs ${awayTeamAbbr}`;
     console.log(`📊 Event ${eventId}: ${scoreDisplay} (${status || 'Unknown Status'})`);
+    console.log(`   Season Type: ${seasonType} (3 = playoffs), Winner ID: ${winnerId || 'none'}`);
   }
 
   // Return event data for elimination processing
@@ -224,11 +231,18 @@ async function handleElimination(eventData) {
 
   // Only process eliminations for playoff games (season_type = 3)
   if (seasonType !== 3) {
+    console.log(`\n⚠️  Not a playoff game (season_type = ${seasonType}, need 3) - skipping elimination`);
     return;
   }
 
   // Only process if game is final and has a winner
-  if (status !== "STATUS_FINAL" || !winnerId) {
+  if (status !== "STATUS_FINAL") {
+    console.log(`\n⚠️  Game not final (status = ${status}) - skipping elimination`);
+    return;
+  }
+
+  if (!winnerId) {
+    console.log(`\n⚠️  No winner detected - skipping elimination`);
     return;
   }
 
