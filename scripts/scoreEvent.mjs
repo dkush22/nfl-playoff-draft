@@ -232,36 +232,42 @@ async function handleElimination(eventData) {
     return;
   }
 
-  // Determine the losing team
-  const loserId = winnerId === homeTeamId ? awayTeamId : homeTeamId;
+  // Determine the losing team abbreviation
   const loserAbbr = winnerId === homeTeamId ? awayTeamAbbr : homeTeamAbbr;
+  const winnerAbbr = winnerId === homeTeamId ? homeTeamAbbr : awayTeamAbbr;
 
-  if (!loserId || !loserAbbr) {
+  if (!loserAbbr) {
     return;
   }
 
-  console.log(`\n🏈 Playoff game completed - checking elimination status...`);
+  console.log(`\n🏈 Playoff game completed - ${winnerAbbr} def. ${loserAbbr}`);
+  console.log(`   Checking elimination status for ${loserAbbr}...`);
 
-  // Check if the losing team is a playoff team
+  // Check if the losing team is a playoff team (lookup by abbreviation)
   const { data: teamData, error: teamError } = await supabase
     .from("nfl_teams")
     .select("id, name, abbreviation, is_playoffs, is_eliminated")
-    .eq("id", loserId)
-    .single();
+    .eq("abbreviation", loserAbbr)
+    .maybeSingle();
 
   if (teamError) {
-    console.error(`⚠️  Could not find team ${loserId} in nfl_teams table`);
+    console.error(`   ❌ Error querying nfl_teams:`, teamError);
+    return;
+  }
+
+  if (!teamData) {
+    console.error(`   ⚠️  Team ${loserAbbr} not found in nfl_teams table`);
     return;
   }
 
   // If team is already eliminated or not in playoffs, nothing to do
   if (!teamData.is_playoffs) {
-    console.log(`   ${loserAbbr} is not a playoff team - no elimination needed`);
+    console.log(`   ℹ️  ${loserAbbr} is not marked as a playoff team - no elimination needed`);
     return;
   }
 
   if (teamData.is_eliminated) {
-    console.log(`   ${loserAbbr} was already eliminated`);
+    console.log(`   ℹ️  ${loserAbbr} was already eliminated`);
     return;
   }
 
@@ -271,7 +277,7 @@ async function handleElimination(eventData) {
   const { error: updateTeamError } = await supabase
     .from("nfl_teams")
     .update({ is_eliminated: true })
-    .eq("id", loserId);
+    .eq("abbreviation", loserAbbr);
 
   if (updateTeamError) {
     console.error(`   ❌ Error eliminating team:`, updateTeamError);
