@@ -12,10 +12,10 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 
 type Member = { user_id: string; display_name: string; created_at?: string };
-type Player = { id: string; name: string; pos: "QB" | "RB" | "WR" | "TE"; nfl_team: string; espn_athlete_id?: string };
+type Player = { id: string; name: string; pos: "QB" | "RB" | "WR" | "TE"; nfl_team: string; espn_athlete_id?: string; is_eliminated?: boolean };
 type PickRow = { id: string; pick_number: number; user_id: string; player_id: string; created_at: string };
-type Standing = { user_id: string; display_name: string; total_points: number };
-type PlayerPoints = { player_id: string; player_name: string; pos: string; nfl_team: string; total_points: number };
+type Standing = { user_id: string; display_name: string; total_points: number; available_players?: number };
+type PlayerPoints = { player_id: string; player_name: string; pos: string; nfl_team: string; total_points: number; is_eliminated?: boolean };
 
 function statusLabel(status: string) {
   if (status === "draft") return "Draft Live";
@@ -105,7 +105,7 @@ export default function LeaguePage() {
 
     supabase
       .from("players")
-      .select("id,name,pos,nfl_team")
+      .select("id,name,pos,nfl_team,is_eliminated")
       .then(({ data, error }) => {
         if (error) {
           console.error(error);
@@ -157,10 +157,37 @@ export default function LeaguePage() {
       totals.set(row.user_id, (totals.get(row.user_id) || 0) + Number(row.fantasy_points));
     }
 
+    // Get all draft picks and player elimination status
+    const { data: picksData } = await supabase
+      .from("draft_picks")
+      .select("user_id, player_id")
+      .eq("league_id", leagueId);
+
+    const playerIds = (picksData || []).map((p) => p.player_id);
+    const { data: playersData } = await supabase
+      .from("players")
+      .select("id, is_eliminated")
+      .in("id", playerIds);
+
+    // Map player elimination status
+    const playerEliminatedMap = new Map(
+      (playersData || []).map((p) => [p.id, p.is_eliminated || false])
+    );
+
+    // Count available players per user
+    const availableByUser = new Map<string, number>();
+    for (const pick of picksData || []) {
+      const isEliminated = playerEliminatedMap.get(pick.player_id) || false;
+      if (!isEliminated) {
+        availableByUser.set(pick.user_id, (availableByUser.get(pick.user_id) || 0) + 1);
+      }
+    }
+
     const rows: Standing[] = Array.from(totals.entries()).map(([uid, total_points]) => ({
       user_id: uid,
       display_name: memberMap.get(uid) || "Unknown",
       total_points,
+      available_players: availableByUser.get(uid) || 0,
     }));
 
     rows.sort((a, b) => b.total_points - a.total_points);
@@ -189,7 +216,7 @@ export default function LeaguePage() {
     // Get player info including espn_athlete_id
     const { data: players, error: playersError } = await supabase
       .from("players")
-      .select("id, name, pos, nfl_team, espn_athlete_id")
+      .select("id, name, pos, nfl_team, espn_athlete_id, is_eliminated")
       .in("id", playerIds);
 
     if (playersError || !players) {
@@ -199,7 +226,7 @@ export default function LeaguePage() {
 
     // Build map of espn_athlete_id to player info
     const playerInfoMap = new Map(
-      players.map((p) => [p.espn_athlete_id, { id: p.id, name: p.name, pos: p.pos, nfl_team: p.nfl_team }])
+      players.map((p) => [p.espn_athlete_id, { id: p.id, name: p.name, pos: p.pos, nfl_team: p.nfl_team, is_eliminated: p.is_eliminated }])
     );
 
     const athleteIds = players.map((p) => p.espn_athlete_id).filter(Boolean);
@@ -238,6 +265,7 @@ export default function LeaguePage() {
           pos: info.pos,
           nfl_team: info.nfl_team,
           total_points: totalPoints,
+          is_eliminated: info.is_eliminated,
         });
       }
     }
@@ -553,7 +581,10 @@ export default function LeaguePage() {
                                 ) : null}
                               </div>
                               <div className="text-xs text-muted-foreground">
-                                {rosterCountForUser(s.user_id)} players
+                                {rosterCountForUser(s.user_id)} players •{" "}
+                                <span className="font-medium text-green-600 dark:text-green-500">
+                                  {s.available_players !== undefined ? s.available_players : "?"} available
+                                </span>
                               </div>
                             </div>
                           </div>
@@ -580,25 +611,35 @@ export default function LeaguePage() {
                               <div className="text-sm text-muted-foreground py-2">No player points yet.</div>
                             ) : (
                               <div className="space-y-1">
-                                {playerPoints.map((pp) => (
-                                  <div
-                                    key={pp.player_id}
-                                    className="flex items-center justify-between py-2 px-2 rounded hover:bg-muted/50"
-                                  >
-                                    <div className="flex items-center gap-2 min-w-0">
-                                      <Badge variant="outline" className="text-xs shrink-0">
-                                        {pp.pos}
-                                      </Badge>
-                                      <div className="min-w-0">
-                                        <div className="text-sm font-medium truncate">{pp.player_name}</div>
-                                        <div className="text-xs text-muted-foreground">{pp.nfl_team}</div>
+                                {playerPoints.map((pp) => {
+                                  // Determine color based on status
+                                  let nameColor = "";
+                                  if (pp.is_eliminated) {
+                                    nameColor = "text-red-600 dark:text-red-500";
+                                  } else if (pp.total_points > 0) {
+                                    nameColor = "text-green-600 dark:text-green-500";
+                                  }
+
+                                  return (
+                                    <div
+                                      key={pp.player_id}
+                                      className="flex items-center justify-between py-2 px-2 rounded hover:bg-muted/50"
+                                    >
+                                      <div className="flex items-center gap-2 min-w-0">
+                                        <Badge variant="outline" className="text-xs shrink-0">
+                                          {pp.pos}
+                                        </Badge>
+                                        <div className="min-w-0">
+                                          <div className={`text-sm font-medium truncate ${nameColor}`}>{pp.player_name}</div>
+                                          <div className="text-xs text-muted-foreground">{pp.nfl_team}</div>
+                                        </div>
+                                      </div>
+                                      <div className="text-sm font-semibold tabular-nums ml-2">
+                                        {pp.total_points.toFixed(2)}
                                       </div>
                                     </div>
-                                    <div className="text-sm font-semibold tabular-nums ml-2">
-                                      {pp.total_points.toFixed(2)}
-                                    </div>
-                                  </div>
-                                ))}
+                                  );
+                                })}
                               </div>
                             )}
                           </div>
@@ -667,10 +708,18 @@ export default function LeaguePage() {
                             const meta = pl ? `${pl.pos} • ${pl.nfl_team}` : "";
                             const points = rosterPlayerPoints.get(p.player_id) || 0;
 
+                            // Determine color based on status
+                            let nameColor = "";
+                            if (pl?.is_eliminated) {
+                              nameColor = "text-red-600 dark:text-red-500";
+                            } else if (points > 0) {
+                              nameColor = "text-green-600 dark:text-green-500";
+                            }
+
                             return (
                               <div key={p.id} className="flex items-center justify-between rounded-md border px-2 sm:px-3 py-1.5 sm:py-2 hover:bg-muted/50 transition-colors">
                                 <div className="min-w-0 flex-1">
-                                  <div className="truncate text-xs sm:text-sm font-medium">{label}</div>
+                                  <div className={`truncate text-xs sm:text-sm font-medium ${nameColor}`}>{label}</div>
                                   {meta ? <div className="text-[10px] sm:text-xs text-muted-foreground">{meta}</div> : null}
                                 </div>
                                 <div className="ml-2 sm:ml-3 flex items-center gap-2 sm:gap-3 shrink-0">
