@@ -580,10 +580,12 @@ export default function LeaguePage() {
                                   <span className="text-xs text-muted-foreground font-normal">(you)</span>
                                 ) : null}
                               </div>
-                              <div className="text-xs text-muted-foreground">
-                                {rosterCountForUser(s.user_id)} players •{" "}
-                                <span className="font-medium text-green-600 dark:text-green-500">
+                              <div className="text-xs">
+                                <span className="font-semibold text-green-600 dark:text-green-500">
                                   {s.available_players !== undefined ? s.available_players : "?"} available
+                                </span>
+                                <span className="text-muted-foreground">
+                                  {" "}/ {rosterCountForUser(s.user_id)} total
                                 </span>
                               </div>
                             </div>
@@ -669,11 +671,16 @@ export default function LeaguePage() {
                 const roster = rosterByUserId.get(m.user_id) || [];
                 const isMe = m.user_id === userId;
 
-                // Calculate total points for this team
+                // Calculate total points and available players for this team
                 const teamTotalPoints = roster.reduce((sum, pick) => {
                   const points = rosterPlayerPoints.get(pick.player_id) || 0;
                   return sum + points;
                 }, 0);
+
+                const availablePlayers = roster.filter((pick) => {
+                  const pl = playersById.get(pick.player_id);
+                  return !pl?.is_eliminated;
+                }).length;
 
                 return (
                   <Card key={m.user_id} className="overflow-hidden border-2 card-hover">
@@ -684,8 +691,11 @@ export default function LeaguePage() {
                             {m.display_name}{" "}
                             {isMe ? <span className="text-xs text-muted-foreground">(you)</span> : null}
                           </div>
-                          <div className="text-xs text-muted-foreground mt-1">
-                            {roster.length} player{roster.length === 1 ? "" : "s"}
+                          <div className="text-xs mt-1">
+                            <span className="font-semibold text-green-600 dark:text-green-500">
+                              {availablePlayers} available
+                            </span>
+                            <span className="text-muted-foreground"> / {roster.length} total</span>
                           </div>
                         </div>
                         <div className="text-right shrink-0">
