@@ -253,10 +253,10 @@ async function handleElimination(eventData) {
   console.log(`\n🏈 Game completed - ${winnerAbbr} def. ${loserAbbr}`);
   console.log(`   Checking elimination status for ${loserAbbr} (Team ID: ${loserId})...`);
 
-  // Check if the losing team is a playoff team (lookup by ID which is ESPN team ID)
+  // Check if the losing team is a playoff team and not already eliminated
   const { data: teamData, error: teamError } = await supabase
     .from("nfl_teams")
-    .select("id, name, abbreviation, is_playoffs, is_eliminated")
+    .select("is_playoffs, is_eliminated")
     .eq("id", loserId)
     .maybeSingle();
 
@@ -266,8 +266,7 @@ async function handleElimination(eventData) {
   }
 
   if (!teamData) {
-    console.error(`   ⚠️  Team ${loserAbbr} (ID: ${loserId}) not found in nfl_teams table`);
-    console.error(`   💡 Make sure playoff teams exist in nfl_teams with id = '${loserId}'`);
+    console.log(`   ⚠️  Team ${loserAbbr} (ID: ${loserId}) not found in nfl_teams table`);
     return;
   }
 
@@ -283,7 +282,7 @@ async function handleElimination(eventData) {
   }
 
   // Eliminate the team
-  console.log(`   💀 Eliminating ${teamData.name} (${loserAbbr}) from playoffs...`);
+  console.log(`   💀 Eliminating ${loserAbbr} from playoffs...`);
 
   const { error: updateTeamError } = await supabase
     .from("nfl_teams")
@@ -297,25 +296,8 @@ async function handleElimination(eventData) {
 
   console.log(`   ✅ Team ${loserAbbr} marked as eliminated`);
 
-  // Now eliminate all players on this team
-  const { data: playersData, error: playersSelectError } = await supabase
-    .from("players")
-    .select("id, name")
-    .eq("nfl_team", loserAbbr);
-
-  if (playersSelectError) {
-    console.error(`   ❌ Error finding players for ${loserAbbr}:`, playersSelectError);
-    return;
-  }
-
-  if (!playersData || playersData.length === 0) {
-    console.log(`   ⚠️  No players found for team ${loserAbbr}`);
-    return;
-  }
-
-  console.log(`   Found ${playersData.length} player(s) on ${loserAbbr}`);
-
-  const { error: updatePlayersError } = await supabase
+  // Eliminate all players on this team
+  const { error: updatePlayersError, count } = await supabase
     .from("players")
     .update({ is_eliminated: true })
     .eq("nfl_team", loserAbbr);
@@ -325,7 +307,7 @@ async function handleElimination(eventData) {
     return;
   }
 
-  console.log(`   ✅ All ${playersData.length} player(s) on ${loserAbbr} marked as eliminated\n`);
+  console.log(`   ✅ All players on ${loserAbbr} marked as eliminated\n`);
 }
 
 async function main() {
