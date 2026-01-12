@@ -242,13 +242,13 @@ async function handleElimination(eventData) {
   }
 
   console.log(`\n🏈 Playoff game completed - ${winnerAbbr} def. ${loserAbbr}`);
-  console.log(`   Checking elimination status for ${loserAbbr} (ESPN ID: ${loserId})...`);
+  console.log(`   Checking elimination status for ${loserAbbr} (Team ID: ${loserId})...`);
 
-  // Check if the losing team is a playoff team (lookup by ESPN team ID)
+  // Check if the losing team is a playoff team (lookup by ID which is ESPN team ID)
   const { data: teamData, error: teamError } = await supabase
     .from("nfl_teams")
-    .select("id, name, abbreviation, espn_team_id, is_playoffs, is_eliminated")
-    .eq("espn_team_id", loserId)
+    .select("id, name, abbreviation, is_playoffs, is_eliminated")
+    .eq("id", loserId)
     .maybeSingle();
 
   if (teamError) {
@@ -257,8 +257,8 @@ async function handleElimination(eventData) {
   }
 
   if (!teamData) {
-    console.error(`   ⚠️  Team ${loserAbbr} (ESPN ID: ${loserId}) not found in nfl_teams table`);
-    console.error(`   💡 Run this SQL to add it: UPDATE nfl_teams SET espn_team_id = '${loserId}' WHERE abbreviation = '${loserAbbr}';`);
+    console.error(`   ⚠️  Team ${loserAbbr} (ID: ${loserId}) not found in nfl_teams table`);
+    console.error(`   💡 Make sure playoff teams exist in nfl_teams with id = '${loserId}'`);
     return;
   }
 
@@ -279,7 +279,7 @@ async function handleElimination(eventData) {
   const { error: updateTeamError } = await supabase
     .from("nfl_teams")
     .update({ is_eliminated: true })
-    .eq("espn_team_id", loserId);
+    .eq("id", loserId);
 
   if (updateTeamError) {
     console.error(`   ❌ Error eliminating team:`, updateTeamError);
