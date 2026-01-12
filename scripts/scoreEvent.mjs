@@ -144,6 +144,37 @@ async function upsertEvent(eventId, summaryJson) {
   const name = summaryJson?.header?.competitions?.[0]?.description ?? null;
   const start = summaryJson?.header?.competitions?.[0]?.date ?? null;
 
+  // Extract game information
+  const competition = summaryJson?.header?.competitions?.[0];
+  const competitors = competition?.competitors || [];
+  const status = competition?.status?.type?.name ?? null;
+
+  // Find home and away teams
+  const homeTeam = competitors.find(c => c.homeAway === "home");
+  const awayTeam = competitors.find(c => c.homeAway === "away");
+
+  // Extract team info
+  const homeTeamId = homeTeam?.team?.id ?? null;
+  const homeTeamName = homeTeam?.team?.displayName ?? homeTeam?.team?.name ?? null;
+  const homeTeamAbbr = homeTeam?.team?.abbreviation ?? null;
+  const homeScore = homeTeam?.score ? parseInt(homeTeam.score, 10) : null;
+
+  const awayTeamId = awayTeam?.team?.id ?? null;
+  const awayTeamName = awayTeam?.team?.displayName ?? awayTeam?.team?.name ?? null;
+  const awayTeamAbbr = awayTeam?.team?.abbreviation ?? null;
+  const awayScore = awayTeam?.score ? parseInt(awayTeam.score, 10) : null;
+
+  // Determine winner (only if game is final and not tied)
+  let winnerId = null;
+  if (status === "STATUS_FINAL" && homeScore !== null && awayScore !== null) {
+    if (homeScore > awayScore) {
+      winnerId = homeTeamId;
+    } else if (awayScore > homeScore) {
+      winnerId = awayTeamId;
+    }
+    // If tied, winnerId remains null
+  }
+
   const { error } = await supabase.from("nfl_events").upsert(
     {
       id: String(eventId),
@@ -152,11 +183,29 @@ async function upsertEvent(eventId, summaryJson) {
       week: week,
       name,
       start_time: start,
+      home_team_id: homeTeamId,
+      home_team_name: homeTeamName,
+      home_team_abbr: homeTeamAbbr,
+      away_team_id: awayTeamId,
+      away_team_name: awayTeamName,
+      away_team_abbr: awayTeamAbbr,
+      home_score: homeScore,
+      away_score: awayScore,
+      status: status,
+      winner_id: winnerId,
     },
     { onConflict: "id" }
   );
 
   if (error) throw error;
+
+  // Log the game info for visibility
+  if (homeTeamAbbr && awayTeamAbbr) {
+    const scoreDisplay = homeScore !== null && awayScore !== null
+      ? `${homeTeamAbbr} ${homeScore} - ${awayScore} ${awayTeamAbbr}`
+      : `${homeTeamAbbr} vs ${awayTeamAbbr}`;
+    console.log(`📊 Event ${eventId}: ${scoreDisplay} (${status || 'Unknown Status'})`);
+  }
 }
 
 async function main() {
