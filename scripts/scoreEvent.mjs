@@ -144,6 +144,43 @@ async function upsertEvent(eventId, summaryJson) {
   const name = summaryJson?.header?.competitions?.[0]?.description ?? null;
   const start = summaryJson?.header?.competitions?.[0]?.date ?? null;
 
+  // Extract game information
+  const competition = summaryJson?.header?.competitions?.[0];
+  const competitors = competition?.competitors || [];
+  const status = competition?.status?.type?.name ?? null;
+
+  // Find home and away teams
+  const homeTeam = competitors.find(c => c.homeAway === "home");
+  const awayTeam = competitors.find(c => c.homeAway === "away");
+
+  // Extract team info
+  const homeTeamId = homeTeam?.team?.id ?? null;
+  const homeTeamName = homeTeam?.team?.displayName ?? homeTeam?.team?.name ?? null;
+  const homeTeamAbbr = homeTeam?.team?.abbreviation ?? null;
+  const homeScore = homeTeam?.score ? parseInt(homeTeam.score, 10) : null;
+
+  const awayTeamId = awayTeam?.team?.id ?? null;
+  const awayTeamName = awayTeam?.team?.displayName ?? awayTeam?.team?.name ?? null;
+  const awayTeamAbbr = awayTeam?.team?.abbreviation ?? null;
+  const awayScore = awayTeam?.score ? parseInt(awayTeam.score, 10) : null;
+
+  // Determine winner (check competitor.winner field first, then scores)
+  let winnerId = null;
+  if (status === "STATUS_FINAL") {
+    // ESPN marks the winner in the competitor object
+    const winningCompetitor = competitors.find(c => c.winner === true);
+    if (winningCompetitor) {
+      winnerId = winningCompetitor.team?.id ?? null;
+    } else if (homeScore !== null && awayScore !== null) {
+      // Fallback to score comparison
+      if (homeScore > awayScore) {
+        winnerId = homeTeamId;
+      } else if (awayScore > homeScore) {
+        winnerId = awayTeamId;
+      }
+    }
+  }
+
   const { error } = await supabase.from("nfl_events").upsert(
     {
       id: String(eventId),
@@ -152,11 +189,125 @@ async function upsertEvent(eventId, summaryJson) {
       week: week,
       name,
       start_time: start,
+      home_team_id: homeTeamId,
+      home_team_name: homeTeamName,
+      home_team_abbr: homeTeamAbbr,
+      away_team_id: awayTeamId,
+      away_team_name: awayTeamName,
+      away_team_abbr: awayTeamAbbr,
+      home_score: homeScore,
+      away_score: awayScore,
+      status: status,
+      winner_id: winnerId,
     },
     { onConflict: "id" }
   );
 
   if (error) throw error;
+
+  // Log the game info for visibility
+  if (homeTeamAbbr && awayTeamAbbr) {
+    const scoreDisplay = homeScore !== null && awayScore !== null
+      ? `${homeTeamAbbr} ${homeScore} - ${awayScore} ${awayTeamAbbr}`
+      : `${homeTeamAbbr} vs ${awayTeamAbbr}`;
+    console.log(`📊 Event ${eventId}: ${scoreDisplay} (${status || 'Unknown Status'})`);
+    if (winnerId) {
+      const winnerAbbr = winnerId === homeTeamId ? homeTeamAbbr : awayTeamAbbr;
+      console.log(`   Winner: ${winnerAbbr} (ID: ${winnerId})`);
+    }
+  }
+
+  // Return event data for elimination processing
+  return {
+    seasonType,
+    status,
+    winnerId,
+    homeTeamId,
+    awayTeamId,
+    homeTeamAbbr,
+    awayTeamAbbr,
+  };
+}
+
+async function handleElimination(eventData) {
+  const { status, winnerId, homeTeamId, awayTeamId, homeTeamAbbr, awayTeamAbbr } = eventData;
+
+  // Only process if game is final and has a winner
+  if (status !== "STATUS_FINAL") {
+    return;
+  }
+
+  if (!winnerId) {
+    return;
+  }
+
+  // Determine the losing team
+  const loserId = winnerId === homeTeamId ? awayTeamId : homeTeamId;
+  const loserAbbr = winnerId === homeTeamId ? awayTeamAbbr : homeTeamAbbr;
+  const winnerAbbr = winnerId === homeTeamId ? homeTeamAbbr : awayTeamAbbr;
+
+  if (!loserId || !loserAbbr) {
+    return;
+  }
+
+  console.log(`\n🏈 Game completed - ${winnerAbbr} def. ${loserAbbr}`);
+  console.log(`   Checking elimination status for ${loserAbbr} (Team ID: ${loserId})...`);
+
+  // Check if the losing team is a playoff team and not already eliminated
+  const { data: teamData, error: teamError } = await supabase
+    .from("nfl_teams")
+    .select("is_playoffs, is_eliminated")
+    .eq("id", loserId)
+    .maybeSingle();
+
+  if (teamError) {
+    console.error(`   ❌ Error querying nfl_teams:`, teamError);
+    return;
+  }
+
+  if (!teamData) {
+    console.log(`   ⚠️  Team ${loserAbbr} (ID: ${loserId}) not found in nfl_teams table`);
+    return;
+  }
+
+  // If team is already eliminated or not in playoffs, nothing to do
+  if (!teamData.is_playoffs) {
+    console.log(`   ℹ️  ${loserAbbr} is not marked as a playoff team - no elimination needed`);
+    return;
+  }
+
+  if (teamData.is_eliminated) {
+    console.log(`   ℹ️  ${loserAbbr} was already eliminated`);
+    return;
+  }
+
+  // Eliminate the team
+  console.log(`   💀 Eliminating ${loserAbbr} from playoffs...`);
+
+  const { error: updateTeamError } = await supabase
+    .from("nfl_teams")
+    .update({ is_eliminated: true })
+    .eq("id", loserId);
+
+  if (updateTeamError) {
+    console.error(`   ❌ Error eliminating team:`, updateTeamError);
+    return;
+  }
+
+  console.log(`   ✅ Team ${loserAbbr} marked as eliminated`);
+
+  // Eliminate all players on this team
+  const { error: updatePlayersError, count } = await supabase
+    .from("players")
+    .update({ is_eliminated: true })
+    .eq("nfl_team", loserAbbr);
+
+  if (updatePlayersError) {
+    console.error(`   ❌ Error eliminating players:`, updatePlayersError);
+    return;
+  }
+
+  console.log(`   ✅ All players on ${loserAbbr} marked as eliminated\n`);
 }
 
 async function main() {
@@ -171,7 +322,10 @@ async function main() {
   if (!res.ok) throw new Error(`ESPN summary fetch failed: ${res.status}`);
   const summary = await res.json();
 
-  await upsertEvent(eventId, summary);
+  const eventData = await upsertEvent(eventId, summary);
+
+  // Handle playoff elimination if applicable
+  await handleElimination(eventData);
 
   const stats = extractStatsFromSummary(summary);
 
