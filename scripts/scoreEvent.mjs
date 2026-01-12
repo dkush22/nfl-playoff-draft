@@ -211,7 +211,10 @@ async function upsertEvent(eventId, summaryJson) {
       ? `${homeTeamAbbr} ${homeScore} - ${awayScore} ${awayTeamAbbr}`
       : `${homeTeamAbbr} vs ${awayTeamAbbr}`;
     console.log(`📊 Event ${eventId}: ${scoreDisplay} (${status || 'Unknown Status'})`);
-    console.log(`   Season Type: ${seasonType} (3 = playoffs), Winner ID: ${winnerId || 'none'}`);
+    if (winnerId) {
+      const winnerAbbr = winnerId === homeTeamId ? homeTeamAbbr : awayTeamAbbr;
+      console.log(`   Winner: ${winnerAbbr} (ID: ${winnerId})`);
+    }
   }
 
   // Return event data for elimination processing
@@ -227,22 +230,14 @@ async function upsertEvent(eventId, summaryJson) {
 }
 
 async function handleElimination(eventData) {
-  const { seasonType, status, winnerId, homeTeamId, awayTeamId, homeTeamAbbr, awayTeamAbbr } = eventData;
-
-  // Only process eliminations for playoff games (season_type = 3)
-  if (seasonType !== 3) {
-    console.log(`\n⚠️  Not a playoff game (season_type = ${seasonType}, need 3) - skipping elimination`);
-    return;
-  }
+  const { status, winnerId, homeTeamId, awayTeamId, homeTeamAbbr, awayTeamAbbr } = eventData;
 
   // Only process if game is final and has a winner
   if (status !== "STATUS_FINAL") {
-    console.log(`\n⚠️  Game not final (status = ${status}) - skipping elimination`);
     return;
   }
 
   if (!winnerId) {
-    console.log(`\n⚠️  No winner detected - skipping elimination`);
     return;
   }
 
@@ -255,7 +250,7 @@ async function handleElimination(eventData) {
     return;
   }
 
-  console.log(`\n🏈 Playoff game completed - ${winnerAbbr} def. ${loserAbbr}`);
+  console.log(`\n🏈 Game completed - ${winnerAbbr} def. ${loserAbbr}`);
   console.log(`   Checking elimination status for ${loserAbbr} (Team ID: ${loserId})...`);
 
   // Check if the losing team is a playoff team (lookup by ID which is ESPN team ID)
